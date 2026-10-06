@@ -1,0 +1,72 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # GitHub's Ubuntu runners already ship the Android SDK with licenses accepted.
+      # (android-actions/setup-android@v3 breaks on cmdline-tools 16 by requesting the
+      # removed legacy "tools" package, so we just add what this project needs.)
+      - name: Install Android SDK packages
+        run: |
+          SDKMANAGER=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -n1)
+          echo "Using $SDKMANAGER"
+          "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0" "platform-tools" > /dev/null
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Decode signing key
+        env:
+          PS_KEYSTORE_B64: ${{ secrets.PS_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$PS_KEYSTORE_B64" ]; then
+            echo "$PS_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "PS_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No PS_KEYSTORE_B64 secret. The release APK will be signed with a throwaway debug key, so it cannot update a previous install."
+          fi
+
+      - name: Build release APK
+        env:
+          PS_KEYSTORE_PASSWORD: ${{ secrets.PS_KEYSTORE_PASSWORD }}
+          PS_KEY_ALIAS: ${{ secrets.PS_KEY_ALIAS }}
+          PS_KEY_PASSWORD: ${{ secrets.PS_KEY_PASSWORD }}
+          PS_VERSION_CODE: ${{ github.run_number }}
+          PS_VERSION_NAME: ${{ github.ref_type == 'tag' && github.ref_name || format('0.1.{0}', github.run_number) }}
+        run: gradle :app:assembleRelease --stacktrace
+
+      - name: Rename APK
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/app-release.apk "out/PocketStash-${{ github.run_number }}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PocketStash-apk
+          path: out/*.apk
+
+      - name: Publish GitHub release (tags only)
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*.apk
