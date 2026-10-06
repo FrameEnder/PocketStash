@@ -24,7 +24,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.frameender.pocketstash.data.EditKind
+import com.frameender.pocketstash.ui.edit.EditScreen
+import com.frameender.pocketstash.ui.edit.EditViewModel
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.ScreenRotation
@@ -115,6 +121,9 @@ class PlayerActivity : ComponentActivity() {
     private var controlsVisible by mutableStateOf(true)
     private var inPip by mutableStateOf(false)
     private var speed by mutableStateOf(1f)
+
+    /** Open "add marker" form (shown over the video), or null. */
+    private var markerForm by mutableStateOf<EditViewModel?>(null)
 
     // Activity tracking
     private var playedMs = 0L
@@ -377,6 +386,41 @@ class PlayerActivity : ComponentActivity() {
                 TopBar()
             }
         }
+
+        markerForm?.let { form ->
+            Dialog(
+                onDismissRequest = { markerForm = null },
+                properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+            ) {
+                EditScreen(
+                    form,
+                    onSaved = {
+                        markerForm = null
+                        toast("Marker added")
+                        refreshMarkers()
+                        player.play()
+                    },
+                    onDeleted = { markerForm = null },
+                    onClose = { markerForm = null; player.play() },
+                )
+            }
+        }
+    }
+
+    private fun openMarkerForm() {
+        val id = sceneId ?: return
+        player.pause()
+        markerForm = EditViewModel(
+            container.repository, container.connection, EditKind.MARKER, null,
+            sceneId = id, sceneTitle = title, startSeconds = player.currentPosition / 1000.0,
+        )
+    }
+
+    private fun refreshMarkers() {
+        val id = sceneId ?: return
+        lifecycleScope.launch {
+            runCatching { container.repository.scene(id) }.onSuccess { markers = it.markers.sortedBy { m -> m.seconds } }
+        }
     }
 
     @Composable
@@ -444,6 +488,9 @@ class PlayerActivity : ComponentActivity() {
                 }
             }
 
+            if (sceneId != null) {
+                IconButton(onClick = { openMarkerForm() }) { Icon(Icons.Filled.BookmarkAdd, "Add marker here", tint = Color.White) }
+            }
             IconButton(onClick = { toggleOrientation() }) { Icon(Icons.Filled.ScreenRotation, "Rotate", tint = Color.White) }
             IconButton(onClick = { enterPip() }) { Icon(Icons.Filled.PictureInPictureAlt, "Picture in picture", tint = Color.White) }
         }

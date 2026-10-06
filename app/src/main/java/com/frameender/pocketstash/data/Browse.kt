@@ -54,8 +54,13 @@ data class CardItem(
     val image: String? = null,
     /** Width / height of the artwork slot. */
     val aspect: Float,
-    /** Logos/studio art look better letterboxed than cropped. */
+    /** Logos/studio art look better fitted (with padding) than cropped. */
     val fit: Boolean = false,
+    /**
+     * Video frames: show the whole frame whatever its ratio (9:16, 4:3, 21:9…),
+     * centred on a dark background inside the card's slot instead of cropping.
+     */
+    val letterbox: Boolean = false,
     val badge: String? = null,
     val rating100: Int? = null,
     val favorite: Boolean = false,

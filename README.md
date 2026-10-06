@@ -2,9 +2,9 @@
 
 A native Android client for [Stash](https://github.com/stashapp/stash), built with Kotlin and Jetpack Compose. It talks straight to your server's GraphQL API, so there's nothing to install on the Stash side.
 
-Requires **Stash v0.27 or newer**, the version where groups replaced movies. Android 8.0+.
+Built against the current Stash schema (October 2026). Browsing needs **v0.27+**, where groups replaced movies; performer editing uses the newer `career_start`/`career_end` fields, so keep Stash up to date. Android 8.0+.
 
-## Phase 1 (this drop)
+## Features
 
 | Area | What works |
 |---|---|
@@ -16,13 +16,35 @@ Requires **Stash v0.27 or newer**, the version where groups replaced movies. And
 | **Performer / Studio / Tag / Group / Gallery pages** | Full metadata, rating, favorite, parent/child studios and tags, plus tabbed related grids (scenes, galleries, images, performers, groups, markers) in a single scroll |
 | **Player** | ExoPlayer that tries the direct stream first and falls back through Stash's transcodes (HLS/DASH/MP4/WebM) automatically on codec errors. Manual stream picker, marker chapters, speed control, picture-in-picture, auto orientation from video shape, rotate lock. Resume point, play count and watch time are sent back to Stash |
 | **Image viewer** | Swipe through any image list (a gallery, a performer's images, search results), pinch and double-tap zoom, rating, O counter, video clips play in the player |
+| **Editing** | Edit everything the web UI can: scenes, performers, studios, tags, groups, galleries, images and markers. Search-as-you-type pickers create missing tags/performers/studios/groups on the fly. Upload covers and images from the phone or a URL, use a date picker, and delete with optional "delete file" / "delete generated". Create new performers, studios, tags, groups and galleries from their lists, and add markers from the scene page or at the current spot in the player |
+| **Customizable Home** | Add, remove, reorder, toggle and duplicate sections. Each carousel picks its entity type, sort, filters, search text, item count and card size. Stats and shortcut sections are also available, and layouts can be copied and pasted. The original layout is the default |
+| **Highlight color** | 16 accent colors, with Amber as the default |
+| **In-app updates** | Checks GitHub Releases on launch and every 6 hours, can notify you, and downloads and installs new builds in place. Choose **Stable** (tagged releases) or **Nightly** (every push) |
+| **Thumbnails** | Video frames of any shape (9:16, 4:3, 21:9…) show whole, letterboxed on a dark backdrop instead of cropped |
 | **Settings** | Library stats, resume toggle, activity tracking toggle and threshold, card size, media URL host rewrite (fixes reverse-proxy and Docker hostnames), change server or disconnect |
 
 Every GraphQL document in `data/Queries.kt` has been validated against the schema in `stashapp/stash` (graphql/schema) as of 2026-10-01.
 
+## Updates & releases
+
+The app updates itself from this repo's GitHub Releases (**Settings → Updates**).
+
+| Channel | Comes from | Made by |
+|---|---|---|
+| **Stable** | the latest release | pushing a tag: `git tag v0.2.0 && git push origin v0.2.0` |
+| **Nightly** | the rolling `nightly` pre-release | every push to `main` (the workflow replaces it automatically) |
+
+Each build's APK is named `PocketStash-<build>.apk`, where the build number is the Actions run number
+and also the app's `versionCode`. The app offers an update when a release's APK has a higher number
+than the installed one. Updates only install over each other when every build is signed with the same
+key (see the signing secrets below).
+
+While the repo is **private**, GitHub won't serve releases anonymously. Either make the repo public or
+paste a fine-grained token (read-only **Contents** access to this repo) under **Updates → Source**.
+
 ## Planned phases
 
-- **Phase 2: editing.** Scene, performer, studio, tag, group, gallery and image edit forms; create, delete and merge; marker create/edit; bulk select with multi-edit.
+- **Phase 2: editing extras.** Merge (tags, performers, studios), bulk select with multi-edit, stash-box IDs, custom fields.
 - **Phase 3: scraping & tagger.** Scrape by URL/fragment, StashDB / stash-box lookup, scene tagger flow, identify.
 - **Phase 4: server admin.** Scan, generate, auto-tag, clean, identify tasks; job queue with live progress; logs; plugins and their tasks; scrapers; saved filters; config.
 - **Phase 5: extras.** Full filter builder (all criteria), saved/default filters from Stash, scene and marker walls, duplicate checker, offline downloads, and a Phase 1 polish pass based on your testing.

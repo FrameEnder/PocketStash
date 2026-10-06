@@ -137,7 +137,7 @@ class StashRepository(
             id = s.id, kind = EntityKind.SCENES, title = s.displayTitle,
             subtitle = listOfNotNull(s.studio?.name, s.date, s.performers.take(2).joinToString { it.name }.ifBlank { null })
                 .joinToString(" · ").ifBlank { null },
-            image = connection.media(s.paths.screenshot), aspect = 16f / 9f,
+            image = connection.media(s.paths.screenshot), aspect = 16f / 9f, letterbox = true,
             badge = listOfNotNull(res, dur?.let { formatDuration(it) }).joinToString(" · ").ifBlank { null },
             rating100 = s.rating100, progress = progress,
             preview = connection.media(s.paths.preview),
@@ -149,7 +149,7 @@ class StashRepository(
         title = m.title.ifBlank { m.primaryTag?.name ?: "Marker" },
         subtitle = listOfNotNull(m.primaryTag?.name?.takeIf { m.title.isNotBlank() }, m.scene?.displayTitle)
             .joinToString(" · ").ifBlank { null },
-        image = connection.media(m.screenshot), aspect = 16f / 9f,
+        image = connection.media(m.screenshot), aspect = 16f / 9f, letterbox = true,
         badge = formatDuration(m.seconds),
         preview = connection.media(m.preview),
         sceneId = m.scene?.id ?: sceneId, seconds = m.seconds,
@@ -202,6 +202,63 @@ class StashRepository(
 
     suspend fun addPlay(id: String) {
         client.execute(Q.sceneAddPlay, vars { put("id", id) })
+    }
+
+    // ------------------------------------------------------------------ editing
+
+    /** Loads the raw entity JSON a form is filled from. */
+    suspend fun loadForEdit(spec: EditSpec, id: String): JsonObject {
+        val data = client.execute(spec.loadQuery, vars { put("id", id) })
+        return spec.extract(data) ?: throw StashException("${spec.kind.label} $id not found")
+    }
+
+    /** Saves (id != null) or creates (id == null). Returns the entity id. */
+    suspend fun saveEdit(spec: EditSpec, input: JsonObject, creating: Boolean): String {
+        val mutation = if (creating) spec.createMutation ?: throw StashException("Can't create a ${spec.kind.label.lowercase()} here")
+        else spec.updateMutation
+        val data = client.execute(mutation, vars { put("input", input) })
+        return data.optObj("result")?.get("id")?.jsonPrimitive?.contentOrNull
+            ?: throw StashException("Stash didn't confirm the save")
+    }
+
+    suspend fun destroy(spec: EditSpec, id: String, deleteFile: Boolean, deleteGenerated: Boolean) {
+        val mutation = spec.destroyMutation ?: throw StashException("Can't delete a ${spec.kind.label.lowercase()}")
+        val variables = when (spec.kind) {
+            EditKind.MARKER -> vars { put("id", id) }
+            EditKind.GALLERY -> vars {
+                putJsonObject("input") {
+                    put("ids", kotlinx.serialization.json.buildJsonArray { add(kotlinx.serialization.json.JsonPrimitive(id)) })
+                    put("delete_file", deleteFile)
+                    put("delete_generated", deleteGenerated)
+                }
+            }
+            EditKind.SCENE, EditKind.IMAGE -> vars {
+                putJsonObject("input") {
+                    put("id", id)
+                    put("delete_file", deleteFile)
+                    put("delete_generated", deleteGenerated)
+                }
+            }
+            else -> vars { putJsonObject("input") { put("id", id) } }
+        }
+        client.execute(mutation, variables)
+    }
+
+    /** Search used by edit-form pickers. */
+    suspend fun searchRefs(kind: EntityKind, text: String, limit: Int = 30): List<Ref> {
+        val q = BrowseSpec.defaultSort(kind, Scope.None).let {
+            if (text.isBlank() && kind in setOf(EntityKind.SCENES, EntityKind.GALLERIES)) it.copy(sort = "updated_at", descending = true) else it
+        }.copy(text = text)
+        return browse(kind, Scope.None, q, 1, limit).items.map { Ref(it.id, it.title, it.image) }
+    }
+
+    /** Creates a tag / performer / studio / group with just a name (picker "Create …"). */
+    suspend fun quickCreate(kind: EntityKind, name: String): Ref {
+        val (field, type) = EditSpecs.quickCreate(kind) ?: throw StashException("Can't create ${kind.label.lowercase()} here")
+        val query = "mutation QuickCreate(\$input: $type!) { result: $field(input: \$input) { id name } }"
+        val data = client.execute(query, vars { putJsonObject("input") { put("name", name.trim()) } })
+        val r = data.obj("result")
+        return Ref(r["id"]!!.jsonPrimitive.content, r["name"]?.jsonPrimitive?.contentOrNull ?: name)
     }
 
     suspend fun saveActivity(id: String, resumeSeconds: Double?, playedSeconds: Double?) {

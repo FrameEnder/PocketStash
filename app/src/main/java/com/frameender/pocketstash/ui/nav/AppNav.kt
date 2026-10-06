@@ -54,6 +54,14 @@ import com.frameender.pocketstash.ui.search.SearchScreen
 import com.frameender.pocketstash.ui.settings.SettingsScreen
 import com.frameender.pocketstash.ui.settings.SetupScreen
 import com.frameender.pocketstash.ui.theme.Ink
+import com.frameender.pocketstash.container
+import com.frameender.pocketstash.data.EditKind
+import com.frameender.pocketstash.ui.common.appViewModel
+import com.frameender.pocketstash.ui.edit.EditScreen
+import com.frameender.pocketstash.ui.edit.EditViewModel
+import com.frameender.pocketstash.ui.home.HomeLayoutScreen
+import com.frameender.pocketstash.ui.settings.UpdatesScreen
+import androidx.compose.runtime.LaunchedEffect
 
 /** Top-level tabs. Scenes/Performers tabs reuse BrowseScreen under their own route objects. */
 @kotlinx.serialization.Serializable object ScenesTab
@@ -82,6 +90,17 @@ fun AppNav(configured: Boolean) {
     val navigator = remember(navController) { Navigator(navController, context) }
     val backStack by navController.currentBackStackEntryAsState()
     val destination = backStack?.destination
+    // Deep links from outside the UI (the update notification).
+    val container = context.container
+    LaunchedEffect(Unit) {
+        container.pendingRoute.collect { route ->
+            when (route) {
+                "updates" -> if (configured) navigator.updates()
+            }
+            if (route != null) container.pendingRoute.value = null
+        }
+    }
+
     val showBar = tabs.any { t -> destination?.hierarchy?.any(t.matches) == true }
 
     CompositionLocalProvider(LocalNavigator provides navigator) {
@@ -155,6 +174,27 @@ fun AppNav(configured: Boolean) {
                 composable<GalleryRoute> { GalleryDetailScreen(it.toRoute<GalleryRoute>().id) }
                 composable<GroupRoute> { GroupDetailScreen(it.toRoute<GroupRoute>().id) }
                 composable<ImageViewerRoute> { ImageViewerScreen(it.toRoute<ImageViewerRoute>()) }
+                composable<UpdatesRoute> { UpdatesScreen() }
+                composable<HomeLayoutRoute> { HomeLayoutScreen() }
+                composable<EditRoute> { entry ->
+                    val r = entry.toRoute<EditRoute>()
+                    val kind = EditKind.valueOf(r.kind)
+                    val vm = appViewModel("edit:${entry.id}") { c ->
+                        EditViewModel(
+                            c.repository, c.connection, kind, r.id,
+                            sceneId = r.sceneId, sceneTitle = r.sceneTitle, startSeconds = r.seconds?.toDoubleOrNull(),
+                        )
+                    }
+                    EditScreen(
+                        vm,
+                        onSaved = { id ->
+                            if (r.id == null && kind != EditKind.MARKER) navigator.openCreated(kind, id)
+                            else navController.popBackStack()
+                        },
+                        onDeleted = { navigator.afterDelete(kind) },
+                        onClose = { navController.popBackStack() },
+                    )
+                }
             }
         }
     }

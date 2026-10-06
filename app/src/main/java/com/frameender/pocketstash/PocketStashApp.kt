@@ -14,13 +14,22 @@ import com.frameender.pocketstash.data.Connection
 import com.frameender.pocketstash.data.SettingsStore
 import com.frameender.pocketstash.data.StashClient
 import com.frameender.pocketstash.data.StashRepository
+import com.frameender.pocketstash.data.UpdateScheduler
+import com.frameender.pocketstash.data.Updater
+import com.frameender.pocketstash.ui.theme.Accents
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 class AppContainer(context: Context) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -31,8 +40,29 @@ class AppContainer(context: Context) {
 
     /** null until DataStore has been read once. */
     val settings: StateFlow<AppSettings?> = settingsStore.settings
-        .onEach { connection.settings = it }
+        .onEach {
+            connection.settings = it
+            Accents.select(it.accent)
+        }
         .stateIn(appScope, SharingStarted.Eagerly, null)
+
+    val updater = Updater(context, connection.http) { settings.value ?: AppSettings() }
+
+    /** Screen to open from outside the UI (e.g. tapping the update notification). */
+    val pendingRoute = MutableStateFlow<String?>(null)
+
+    init {
+        // Keep the background update check in step with the setting, and check once per launch.
+        appScope.launch {
+            settings.filterNotNull().map { it.autoUpdateCheck }.distinctUntilChanged().collect { enabled ->
+                UpdateScheduler.apply(context, enabled)
+            }
+        }
+        appScope.launch {
+            val s = settings.filterNotNull().first()
+            if (s.autoUpdateCheck) updater.check(s)
+        }
+    }
 }
 
 class PocketStashApp : Application(), SingletonImageLoader.Factory {

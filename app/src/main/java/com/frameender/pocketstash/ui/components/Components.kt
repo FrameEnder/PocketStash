@@ -67,14 +67,14 @@ fun EntityCard(
                 .fillMaxWidth()
                 .aspectRatio(item.aspect)
                 .clip(RoundedCornerShape(10.dp))
-                .background(Ink.Surface)
+                .background(if (item.letterbox) LetterboxBg else Ink.Surface)
                 .border(1.dp, Ink.Line, RoundedCornerShape(10.dp))
         ) {
             if (item.image != null) {
                 AsyncImage(
                     model = item.image,
                     contentDescription = item.title,
-                    contentScale = if (item.fit) ContentScale.Fit else ContentScale.Crop,
+                    contentScale = if (item.fit || item.letterbox) ContentScale.Fit else ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxSize()
                         .then(if (item.fit) Modifier.padding(10.dp) else Modifier),
@@ -142,6 +142,9 @@ fun EntityCard(
         }
     }
 }
+
+/** Backdrop behind letterboxed / pillarboxed video frames. */
+val LetterboxBg = Color(0xFF050506)
 
 fun ratingLabel(rating100: Int): String {
     val stars = rating100 / 20.0

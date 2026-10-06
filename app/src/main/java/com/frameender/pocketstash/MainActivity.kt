@@ -1,5 +1,6 @@
 package com.frameender.pocketstash
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -18,6 +19,11 @@ import com.frameender.pocketstash.ui.theme.Ink
 import com.frameender.pocketstash.ui.theme.PocketStashTheme
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        /** Intent extra naming a screen to open, e.g. "updates" from the update notification. */
+        const val EXTRA_OPEN = "open"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
@@ -25,6 +31,7 @@ class MainActivity : ComponentActivity() {
         )
         super.onCreate(savedInstanceState)
         val app = this.container
+        if (savedInstanceState == null) handleIntent(intent)
         setContent {
             PocketStashTheme {
                 val settings by app.settings.collectAsState()
@@ -38,5 +45,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        intent?.getStringExtra(EXTRA_OPEN)?.let { container.pendingRoute.value = it }
     }
 }

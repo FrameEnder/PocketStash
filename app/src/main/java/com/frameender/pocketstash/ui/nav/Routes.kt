@@ -10,6 +10,18 @@ import kotlinx.serialization.Serializable
 @Serializable object SearchRoute
 @Serializable object LibraryRoute
 @Serializable object SettingsRoute
+@Serializable object UpdatesRoute
+@Serializable object HomeLayoutRoute
+
+/** Edit form for any entity; [id] null = create. [sceneId]/[seconds] pre-fill a new marker. */
+@Serializable
+data class EditRoute(
+    val kind: String,
+    val id: String? = null,
+    val sceneId: String? = null,
+    val sceneTitle: String? = null,
+    val seconds: String? = null,
+)
 
 /** Top-level list for one entity kind, optionally pre-filtered (from "See all"). */
 @Serializable

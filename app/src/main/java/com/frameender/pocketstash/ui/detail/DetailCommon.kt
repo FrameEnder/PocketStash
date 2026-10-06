@@ -8,6 +8,11 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -94,6 +99,7 @@ class DetailViewModel<T : Any>(private val loader: suspend () -> T) : ViewModel(
 @Composable
 fun DetailScaffold(
     title: String,
+    onEdit: (() -> Unit)? = null,
     actions: @Composable () -> Unit = {},
     content: @Composable BoxScope.() -> Unit,
 ) {
@@ -104,12 +110,24 @@ fun DetailScaffold(
             TopAppBar(
                 title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = { IconButton(onClick = { nav.back() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-                actions = { actions() },
+                actions = {
+                    actions()
+                    if (onEdit != null) IconButton(onClick = onEdit) { Icon(Icons.Outlined.Edit, "Edit") }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Ink.Bg),
             )
         },
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize(), content = content)
+    }
+}
+
+/** Re-fetch when coming back to this screen (e.g. after saving an edit), but not on first show. */
+@Composable
+fun ReloadOnReturn(vm: DetailViewModel<*>) {
+    var first by remember { mutableStateOf(true) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (first) first = false else vm.reload()
     }
 }
 

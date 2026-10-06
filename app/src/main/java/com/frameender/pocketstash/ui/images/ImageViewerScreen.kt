@@ -28,7 +28,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.WaterDrop
+import com.frameender.pocketstash.data.EditKind
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -111,7 +113,7 @@ fun ImageViewerScreen(route: ImageViewerRoute) {
                         contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize(),
                     )
                     Icon(
-                        Icons.Filled.PlayArrow, "Play clip", tint = Ink.Bg,
+                        Icons.Filled.PlayArrow, "Play clip", tint = Ink.OnAmber,
                         modifier = Modifier.align(Alignment.Center).size(72.dp).clip(CircleShape).background(Ink.Amber).padding(12.dp),
                     )
                 }
@@ -171,6 +173,9 @@ fun ImageViewerScreen(route: ImageViewerRoute) {
                                 .onFailure { Toast.makeText(context, it.friendly(), Toast.LENGTH_LONG).show() }
                         }
                     }) { Icon(Icons.Outlined.WaterDrop, "Add O", tint = Ink.Amber) }
+                    IconButton(onClick = { nav.edit(EditKind.IMAGE, current.id) }) {
+                        Icon(Icons.Outlined.Edit, "Edit image", tint = Color.White)
+                    }
                 }
             }
         }

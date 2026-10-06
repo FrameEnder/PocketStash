@@ -7,6 +7,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.navigation.NavController
 import com.frameender.pocketstash.data.BrowseQuery
 import com.frameender.pocketstash.data.CardItem
+import com.frameender.pocketstash.data.EditKind
 import com.frameender.pocketstash.data.EntityKind
 import com.frameender.pocketstash.data.Scope
 import com.frameender.pocketstash.player.PlayerActivity
@@ -34,6 +35,33 @@ class Navigator(private val nav: NavController, private val context: Context) {
     fun gallery(id: String) = nav.navigate(GalleryRoute(id))
     fun group(id: String) = nav.navigate(GroupRoute(id))
     fun settings() = nav.navigate(SettingsRoute)
+    fun updates() = nav.navigate(UpdatesRoute) { launchSingleTop = true }
+    fun homeLayout() = nav.navigate(HomeLayoutRoute)
+
+    fun edit(kind: EditKind, id: String) = nav.navigate(EditRoute(kind.name, id))
+    fun create(kind: EditKind) = nav.navigate(EditRoute(kind.name))
+    fun newMarker(sceneId: String, sceneTitle: String, seconds: Double?) =
+        nav.navigate(EditRoute(EditKind.MARKER.name, null, sceneId, sceneTitle, seconds?.toString()))
+
+    /** After creating something, show it (replacing the form). */
+    fun openCreated(kind: EditKind, id: String) {
+        nav.popBackStack()
+        when (kind) {
+            EditKind.SCENE -> scene(id)
+            EditKind.PERFORMER -> performer(id)
+            EditKind.STUDIO -> studio(id)
+            EditKind.TAG -> tag(id)
+            EditKind.GROUP -> group(id)
+            EditKind.GALLERY -> gallery(id)
+            EditKind.IMAGE, EditKind.MARKER -> Unit
+        }
+    }
+
+    /** After deleting from an edit form, also leave the (now gone) detail page. */
+    fun afterDelete(kind: EditKind) {
+        nav.popBackStack()
+        if (kind != EditKind.MARKER) nav.popBackStack()
+    }
     fun setup() = nav.navigate(SetupRoute)
     fun back() = nav.popBackStack()
 

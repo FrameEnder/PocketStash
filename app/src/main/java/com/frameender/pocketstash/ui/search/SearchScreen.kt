@@ -1,6 +1,7 @@
 package com.frameender.pocketstash.ui.search
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -131,19 +132,21 @@ fun SearchScreen() {
             !state.searched -> item { EmptyBox("Scenes, performers, studios, tags, groups, galleries, markers and images") }
         }
         items(state.hits, key = { it.kind.name }) { hit ->
-            SectionHeader(hit.kind.label, hit.total, "See all") {
-                nav.browse(hit.kind, hit.query.sort, hit.query.descending, text = hit.query.text)
-            }
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                itemsIndexed(hit.items, key = { _, it -> it.id }) { index, item ->
-                    EntityCard(
-                        item,
-                        onClick = { nav.open(item, index, Scope.None, hit.query) },
-                        modifier = Modifier.width((140 * widthFactor(hit.kind)).dp),
-                    )
+            Column(Modifier.fillMaxWidth()) {
+                SectionHeader(hit.kind.label, hit.total, "See all") {
+                    nav.browse(hit.kind, hit.query.sort, hit.query.descending, text = hit.query.text)
+                }
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    itemsIndexed(hit.items, key = { _, it -> it.id }) { index, item ->
+                        EntityCard(
+                            item,
+                            onClick = { nav.open(item, index, Scope.None, hit.query) },
+                            modifier = Modifier.width((140 * widthFactor(hit.kind)).dp),
+                        )
+                    }
                 }
             }
         }

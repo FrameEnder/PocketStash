@@ -70,3 +70,20 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: out/*.apk
+          generate_release_notes: true
+
+      # Nightly channel: every push to main replaces the rolling "nightly" pre-release.
+      # The in-app updater reads the build number from the APK name (PocketStash-<run>.apk).
+      - name: Publish nightly pre-release (main pushes)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete nightly --yes --cleanup-tag || true
+          git log -1 --pretty='format:%s%n%n%b' > notes.txt
+          printf '\n\nBuild ${{ github.run_number }} from %s\n' "${GITHUB_SHA::7}" >> notes.txt
+          gh release create nightly out/*.apk \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Nightly #${{ github.run_number }}" \
+            --notes-file notes.txt

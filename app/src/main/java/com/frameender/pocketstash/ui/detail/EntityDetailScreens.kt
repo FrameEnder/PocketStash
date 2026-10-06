@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.frameender.pocketstash.container
+import com.frameender.pocketstash.data.EditKind
 import com.frameender.pocketstash.data.EntityKind
 import com.frameender.pocketstash.data.Scope
 import com.frameender.pocketstash.data.formatDuration
@@ -40,13 +41,16 @@ private val headerSpan: (androidx.compose.foundation.lazy.grid.LazyGridItemSpanS
 @Composable
 fun PerformerDetailScreen(id: String) {
     val repo = LocalContext.current.container.repository
+    val nav = LocalNavigator.current
     val vm = appViewModel("performer:$id") { c -> DetailViewModel { c.repository.performer(id) } }
     val state by vm.state.collectAsState()
     MutationToasts(vm)
+    ReloadOnReturn(vm)
     val p = state.valueOrNull()
 
     DetailScaffold(
         title = p?.name ?: "Performer",
+        onEdit = { nav.edit(EditKind.PERFORMER, id) },
         actions = {
             if (p != null) FavoriteButton(p.favorite) { v ->
                 vm.mutate({ it.copy(favorite = v) }) { repo.favoritePerformer(id, v) }
@@ -122,10 +126,12 @@ fun StudioDetailScreen(id: String) {
     val vm = appViewModel("studio:$id") { c -> DetailViewModel { c.repository.studio(id) } }
     val state by vm.state.collectAsState()
     MutationToasts(vm)
+    ReloadOnReturn(vm)
     val st = state.valueOrNull()
 
     DetailScaffold(
         title = st?.name ?: "Studio",
+        onEdit = { nav.edit(EditKind.STUDIO, id) },
         actions = {
             if (st != null) FavoriteButton(st.favorite) { v ->
                 vm.mutate({ it.copy(favorite = v) }) { repo.favoriteStudio(id, v) }
@@ -194,10 +200,12 @@ fun TagDetailScreen(id: String) {
     val vm = appViewModel("tag:$id") { c -> DetailViewModel { c.repository.tag(id) } }
     val state by vm.state.collectAsState()
     MutationToasts(vm)
+    ReloadOnReturn(vm)
     val tg = state.valueOrNull()
 
     DetailScaffold(
         title = tg?.name ?: "Tag",
+        onEdit = { nav.edit(EditKind.TAG, id) },
         actions = {
             if (tg != null) FavoriteButton(tg.favorite) { v ->
                 vm.mutate({ it.copy(favorite = v) }) { repo.favoriteTag(id, v) }
@@ -259,9 +267,10 @@ fun GroupDetailScreen(id: String) {
     val vm = appViewModel("group:$id") { c -> DetailViewModel { c.repository.group(id) } }
     val state by vm.state.collectAsState()
     MutationToasts(vm)
+    ReloadOnReturn(vm)
     val gr = state.valueOrNull()
 
-    DetailScaffold(title = gr?.name ?: "Group") {
+    DetailScaffold(title = gr?.name ?: "Group", onEdit = { nav.edit(EditKind.GROUP, id) }) {
         LoadSwitch(state, vm::reload) { g: Group ->
             TabbedRelated(Scope.Group(id), listOf(TabSpec(EntityKind.SCENES, g.sceneCount))) {
                 item(span = headerSpan, key = "header") {
@@ -314,9 +323,10 @@ fun GalleryDetailScreen(id: String) {
     val vm = appViewModel("gallery:$id") { c -> DetailViewModel { c.repository.gallery(id) } }
     val state by vm.state.collectAsState()
     MutationToasts(vm)
+    ReloadOnReturn(vm)
     val ga = state.valueOrNull()
 
-    DetailScaffold(title = ga?.displayTitle ?: "Gallery") {
+    DetailScaffold(title = ga?.displayTitle ?: "Gallery", onEdit = { nav.edit(EditKind.GALLERY, id) }) {
         LoadSwitch(state, vm::reload) { g: Gallery ->
             TabbedRelated(Scope.Gallery(id), listOf(TabSpec(EntityKind.IMAGES, g.imageCount))) {
                 item(span = headerSpan, key = "header") {

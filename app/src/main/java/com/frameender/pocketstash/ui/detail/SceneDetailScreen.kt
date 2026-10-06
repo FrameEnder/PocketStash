@@ -61,6 +61,7 @@ import com.frameender.pocketstash.ui.common.valueOrNull
 import com.frameender.pocketstash.ui.common.appViewModel
 import com.frameender.pocketstash.ui.components.EntityCard
 import com.frameender.pocketstash.ui.components.InfoRow
+import com.frameender.pocketstash.ui.components.LetterboxBg
 import com.frameender.pocketstash.ui.components.LinkChip
 import com.frameender.pocketstash.ui.components.Pill
 import com.frameender.pocketstash.ui.components.ScrimBrush
@@ -69,6 +70,8 @@ import com.frameender.pocketstash.ui.components.StarRating
 import com.frameender.pocketstash.ui.nav.LocalNavigator
 import com.frameender.pocketstash.ui.theme.Ink
 import com.frameender.pocketstash.data.CardItem
+import com.frameender.pocketstash.data.EditKind
+import androidx.compose.material.icons.outlined.Edit
 import com.frameender.pocketstash.data.EntityKind
 
 @Composable
@@ -82,7 +85,8 @@ fun SceneDetailScreen(id: String) {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.reload() }
 
     val sc = state.valueOrNull()
-    DetailScaffold(title = sc?.displayTitle ?: "Scene") {
+    val nav = LocalNavigator.current
+    DetailScaffold(title = sc?.displayTitle ?: "Scene", onEdit = { nav.edit(EditKind.SCENE, id) }) {
         LoadSwitch(state, vm::reload) { scene ->
             SceneBody(
                 scene,
@@ -118,12 +122,13 @@ private fun SceneBody(
                 Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f)
-                    .background(Color.Black)
+                    .background(LetterboxBg)
                     .clickable { nav.play(s.id, resume) },
             ) {
                 AsyncImage(
                     model = conn.media(s.paths.screenshot), contentDescription = null,
-                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                    // Fit, not crop: portrait (9:16) or 4:3 frames show whole on the dark backdrop.
+                    contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize(),
                 )
                 Box(Modifier.fillMaxSize().background(ScrimBrush))
                 Box(
@@ -134,7 +139,7 @@ private fun SceneBody(
                         .background(Ink.Amber),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Filled.PlayArrow, "Play", tint = Ink.Bg, modifier = Modifier.size(44.dp))
+                    Icon(Icons.Filled.PlayArrow, "Play", tint = Ink.OnAmber, modifier = Modifier.size(44.dp))
                 }
                 Row(
                     Modifier.align(Alignment.BottomStart).padding(12.dp),
@@ -222,21 +227,23 @@ private fun SceneBody(
         // ---------------------------------------------------------------- performers
         if (s.performers.isNotEmpty()) {
             item(key = "performers") {
-                SectionHeader("Performers", s.performers.size)
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    items(s.performers, key = { it.id }) { p ->
-                        EntityCard(
-                            CardItem(
-                                id = p.id, kind = EntityKind.PERFORMERS, title = p.name,
-                                subtitle = p.disambiguation, image = conn.media(p.imagePath),
-                                aspect = 2f / 3f, favorite = p.favorite,
-                            ),
-                            onClick = { nav.performer(p.id) },
-                            modifier = Modifier.width(112.dp),
-                        )
+                Column(Modifier.fillMaxWidth()) {
+                    SectionHeader("Performers", s.performers.size)
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(s.performers, key = { it.id }) { p ->
+                            EntityCard(
+                                CardItem(
+                                    id = p.id, kind = EntityKind.PERFORMERS, title = p.name,
+                                    subtitle = p.disambiguation, image = conn.media(p.imagePath),
+                                    aspect = 2f / 3f, favorite = p.favorite,
+                                ),
+                                onClick = { nav.performer(p.id) },
+                                modifier = Modifier.width(112.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -245,14 +252,20 @@ private fun SceneBody(
         // ---------------------------------------------------------------- tags
         if (s.tags.isNotEmpty()) {
             item(key = "tags") {
-                SectionHeader("Tags", s.tags.size)
-                Column(Modifier.padding(horizontal = 16.dp)) { TagChips(s.tags) }
+                Column(Modifier.fillMaxWidth()) {
+                    SectionHeader("Tags", s.tags.size)
+                    Column(Modifier.padding(horizontal = 16.dp)) { TagChips(s.tags) }
+                }
             }
         }
 
         // ---------------------------------------------------------------- markers
+        item(key = "markers-h") {
+            SectionHeader("Markers", s.markers.size.takeIf { it > 0 }, "+ Add") {
+                nav.newMarker(s.id, s.displayTitle, null)
+            }
+        }
         if (s.markers.isNotEmpty()) {
-            item(key = "markers-h") { SectionHeader("Markers", s.markers.size) }
             items(s.markers.sortedBy { it.seconds }, key = { "m" + it.id }) { m ->
                 Row(
                     Modifier
@@ -262,8 +275,8 @@ private fun SceneBody(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     AsyncImage(
-                        model = conn.media(m.screenshot), contentDescription = null, contentScale = ContentScale.Crop,
-                        modifier = Modifier.width(112.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Ink.Surface),
+                        model = conn.media(m.screenshot), contentDescription = null, contentScale = ContentScale.Fit,
+                        modifier = Modifier.width(112.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(LetterboxBg),
                     )
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
@@ -281,6 +294,9 @@ private fun SceneBody(
                         formatDuration(m.seconds) + (m.endSeconds?.let { "–" + formatDuration(it) } ?: ""),
                         style = MaterialTheme.typography.labelMedium, color = Ink.Amber,
                     )
+                    IconButton(onClick = { nav.edit(EditKind.MARKER, m.id) }) {
+                        Icon(Icons.Outlined.Edit, "Edit marker", tint = Ink.Muted, modifier = Modifier.size(20.dp))
+                    }
                 }
             }
         }
@@ -288,27 +304,29 @@ private fun SceneBody(
         // ---------------------------------------------------------------- galleries / groups
         if (s.galleries.isNotEmpty() || s.groups.isNotEmpty()) {
             item(key = "links") {
-                SectionHeader("Linked")
-                FlowRow(
-                    Modifier.padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    s.groups.forEach { g ->
-                        LinkChip(
-                            g.group.name + (g.sceneIndex?.let { " #$it" } ?: ""),
-                            onClick = { nav.group(g.group.id) },
-                            image = conn.media(g.group.frontImagePath),
-                            icon = Icons.Outlined.Movie,
-                        )
-                    }
-                    s.galleries.forEach { g ->
-                        LinkChip(
-                            g.title?.ifBlank { null } ?: "Gallery ${g.id}",
-                            onClick = { nav.gallery(g.id) },
-                            image = conn.media(g.paths?.cover),
-                            icon = Icons.Outlined.Collections,
-                        )
+                Column(Modifier.fillMaxWidth()) {
+                    SectionHeader("Linked")
+                    FlowRow(
+                        Modifier.padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        s.groups.forEach { g ->
+                            LinkChip(
+                                g.group.name + (g.sceneIndex?.let { " #$it" } ?: ""),
+                                onClick = { nav.group(g.group.id) },
+                                image = conn.media(g.group.frontImagePath),
+                                icon = Icons.Outlined.Movie,
+                            )
+                        }
+                        s.galleries.forEach { g ->
+                            LinkChip(
+                                g.title?.ifBlank { null } ?: "Gallery ${g.id}",
+                                onClick = { nav.gallery(g.id) },
+                                image = conn.media(g.paths?.cover),
+                                icon = Icons.Outlined.Collections,
+                            )
+                        }
                     }
                 }
             }

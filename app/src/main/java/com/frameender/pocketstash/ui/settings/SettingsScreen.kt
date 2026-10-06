@@ -2,7 +2,9 @@ package com.frameender.pocketstash.ui.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -13,11 +15,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -43,6 +52,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.frameender.pocketstash.container
@@ -52,8 +63,10 @@ import com.frameender.pocketstash.data.model.ServerInfo
 import com.frameender.pocketstash.data.model.Stats
 import com.frameender.pocketstash.ui.common.friendly
 import com.frameender.pocketstash.ui.components.InfoRow
+import com.frameender.pocketstash.ui.components.Pill
 import com.frameender.pocketstash.ui.components.StatTile
 import com.frameender.pocketstash.ui.nav.LocalNavigator
+import com.frameender.pocketstash.ui.theme.Accents
 import com.frameender.pocketstash.ui.theme.Ink
 import kotlinx.coroutines.launch
 
@@ -63,6 +76,7 @@ fun SettingsScreen(onDisconnected: () -> Unit) {
     val nav = LocalNavigator.current
     val container = LocalContext.current.container
     val settings by container.settings.collectAsState()
+    val update by container.updater.available.collectAsState()
     val scope = rememberCoroutineScope()
     var info by remember { mutableStateOf<ServerInfo?>(null) }
     var stats by remember { mutableStateOf<Stats?>(null) }
@@ -78,7 +92,7 @@ fun SettingsScreen(onDisconnected: () -> Unit) {
     }
 
     val s = settings ?: AppSettings()
-    fun change(t: (AppSettings) -> AppSettings) = scope.launch { container.settingsStore.update(t, s) }
+    fun change(t: (AppSettings) -> AppSettings) = scope.launch { container.settingsStore.update(t) }
 
     Scaffold(
         containerColor = Ink.Bg,
@@ -94,7 +108,7 @@ fun SettingsScreen(onDisconnected: () -> Unit) {
             Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Card("Server") {
+            SettingsCard("Server") {
                 InfoRow("URL", s.baseUrl?.toString())
                 InfoRow("API key", if (s.apiKey.isBlank()) "none" else "•••• ${s.apiKey.takeLast(4)}")
                 InfoRow("Version", info?.version)
@@ -111,8 +125,21 @@ fun SettingsScreen(onDisconnected: () -> Unit) {
                 }
             }
 
+            SettingsCard("App") {
+                NavRow(
+                    Icons.Outlined.SystemUpdate, "Updates",
+                    if (update != null) "Build ${update!!.versionCode} available" else "Channel: ${s.updateChannel}",
+                    badge = if (update != null) "NEW" else null,
+                ) { nav.updates() }
+                NavRow(Icons.Outlined.Dashboard, "Customize Home", "Pick, order and tune the Home sections") { nav.homeLayout() }
+            }
+
+            SettingsCard("Highlight color") {
+                AccentPicker(s.accent) { key -> change { it.copy(accent = key) } }
+            }
+
             stats?.let { st ->
-                Card("Library stats") {
+                SettingsCard("Library stats") {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         StatTile("Scenes", "%,d".format(st.sceneCount))
                         StatTile("Scene size", formatBytes(st.scenesSize))
@@ -132,7 +159,7 @@ fun SettingsScreen(onDisconnected: () -> Unit) {
                 }
             }
 
-            Card("Playback") {
+            SettingsCard("Playback") {
                 Toggle("Resume where you left off", s.resumePlayback) { v -> change { it.copy(resumePlayback = v) } }
                 Toggle("Send play activity to Stash", s.trackActivity, "Play count, resume point and watch time") { v ->
                     change { it.copy(trackActivity = v) }
@@ -150,7 +177,7 @@ fun SettingsScreen(onDisconnected: () -> Unit) {
                 )
             }
 
-            Card("Display") {
+            SettingsCard("Display") {
                 Text("Card size: ${s.gridCardWidth}dp", style = MaterialTheme.typography.bodyMedium)
                 Slider(
                     value = s.gridCardWidth.toFloat(),
@@ -160,7 +187,7 @@ fun SettingsScreen(onDisconnected: () -> Unit) {
                 )
             }
 
-            Card("Network") {
+            SettingsCard("Network") {
                 Toggle(
                     "Rewrite media URLs to this server",
                     s.rewriteHost,
@@ -169,7 +196,7 @@ fun SettingsScreen(onDisconnected: () -> Unit) {
             }
 
             Text(
-                "PocketStash 0.1.0 · unofficial client for stashapp/stash",
+                "PocketStash ${container.updater.installedVersionName()} (build ${container.updater.installedVersionCode()}) · unofficial client for stashapp/stash",
                 style = MaterialTheme.typography.labelSmall,
                 color = Ink.Muted,
                 modifier = Modifier.align(Alignment.CenterHorizontally),
@@ -180,7 +207,7 @@ fun SettingsScreen(onDisconnected: () -> Unit) {
 }
 
 @Composable
-private fun Card(title: String, content: @Composable ColumnScope.() -> Unit) {
+internal fun SettingsCard(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -196,7 +223,7 @@ private fun Card(title: String, content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun Toggle(label: String, value: Boolean, hint: String? = null, onChange: (Boolean) -> Unit) {
+internal fun Toggle(label: String, value: Boolean, hint: String? = null, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(label, style = MaterialTheme.typography.bodyLarge)
@@ -207,5 +234,66 @@ private fun Toggle(label: String, value: Boolean, hint: String? = null, onChange
             onCheckedChange = onChange,
             colors = SwitchDefaults.colors(checkedTrackColor = Ink.Amber, checkedThumbColor = Ink.Bg),
         )
+    }
+}
+
+@Composable
+private fun NavRow(icon: ImageVector, title: String, subtitle: String, badge: String? = null, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = Ink.Amber, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Ink.Muted)
+        }
+        badge?.let { Pill(it, accent = true); Spacer(Modifier.width(6.dp)) }
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = Ink.Muted)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AccentPicker(selected: String, onPick: (String) -> Unit) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Accents.all.forEach { a ->
+            val on = a.key == selected
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .width(64.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { onPick(a.key) }
+                    .padding(vertical = 4.dp),
+            ) {
+                Box(
+                    Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(a.main)
+                        .border(if (on) 3.dp else 0.dp, if (on) Ink.Text else Color.Transparent, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (on) Icon(Icons.Filled.Check, null, tint = a.on, modifier = Modifier.size(20.dp))
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    a.label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (on) a.main else Ink.Muted,
+                    maxLines = 1,
+                )
+            }
+        }
     }
 }

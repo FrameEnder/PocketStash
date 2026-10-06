@@ -2,6 +2,7 @@ package com.frameender.pocketstash.data
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -30,6 +31,18 @@ data class AppSettings(
     val animatedPreviews: Boolean = false,
     /** Minimum card width in dp for grids. */
     val gridCardWidth: Int = 170,
+
+    // Appearance
+    val accent: String = "amber",
+    /** JSON list of Home widgets; blank = built-in default layout. */
+    val homeLayout: String = "",
+
+    // In-app updates (GitHub Releases)
+    val updateChannel: String = "stable",          // "stable" or "nightly"
+    val autoUpdateCheck: Boolean = true,
+    val updateNotify: Boolean = false,
+    val updateRepo: String = "FrameEnder/PocketStash",
+    val githubToken: String = "",                  // only needed while the repo is private
 ) {
     val baseUrl: HttpUrl? get() = normalizeServerUrl(serverUrl)
     val isConfigured: Boolean get() = baseUrl != null
@@ -44,7 +57,7 @@ fun normalizeServerUrl(raw: String): HttpUrl? {
 }
 
 class SettingsStore(private val context: Context) {
-    private object Keys {
+    private object K {
         val url = stringPreferencesKey("server_url")
         val apiKey = stringPreferencesKey("api_key")
         val rewrite = booleanPreferencesKey("rewrite_host")
@@ -53,44 +66,66 @@ class SettingsStore(private val context: Context) {
         val playAfter = intPreferencesKey("play_count_after")
         val animated = booleanPreferencesKey("animated_previews")
         val gridWidth = intPreferencesKey("grid_card_width")
+        val accent = stringPreferencesKey("accent")
+        val homeLayout = stringPreferencesKey("home_layout")
+        val updChannel = stringPreferencesKey("upd_channel")
+        val updAuto = booleanPreferencesKey("upd_auto")
+        val updNotify = booleanPreferencesKey("upd_notify")
+        val updRepo = stringPreferencesKey("upd_repo")
+        val ghToken = stringPreferencesKey("gh_token")
     }
 
-    val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
-        AppSettings(
-            serverUrl = p[Keys.url] ?: "",
-            apiKey = p[Keys.apiKey] ?: "",
-            rewriteHost = p[Keys.rewrite] ?: true,
-            resumePlayback = p[Keys.resume] ?: true,
-            trackActivity = p[Keys.track] ?: true,
-            playCountAfterSeconds = p[Keys.playAfter] ?: 10,
-            animatedPreviews = p[Keys.animated] ?: false,
-            gridCardWidth = p[Keys.gridWidth] ?: 170,
+    private fun Preferences.toSettings(): AppSettings {
+        val d = AppSettings()
+        return AppSettings(
+            serverUrl = this[K.url] ?: d.serverUrl,
+            apiKey = this[K.apiKey] ?: d.apiKey,
+            rewriteHost = this[K.rewrite] ?: d.rewriteHost,
+            resumePlayback = this[K.resume] ?: d.resumePlayback,
+            trackActivity = this[K.track] ?: d.trackActivity,
+            playCountAfterSeconds = this[K.playAfter] ?: d.playCountAfterSeconds,
+            animatedPreviews = this[K.animated] ?: d.animatedPreviews,
+            gridCardWidth = this[K.gridWidth] ?: d.gridCardWidth,
+            accent = this[K.accent] ?: d.accent,
+            homeLayout = this[K.homeLayout] ?: d.homeLayout,
+            updateChannel = this[K.updChannel] ?: d.updateChannel,
+            autoUpdateCheck = this[K.updAuto] ?: d.autoUpdateCheck,
+            updateNotify = this[K.updNotify] ?: d.updateNotify,
+            updateRepo = this[K.updRepo] ?: d.updateRepo,
+            githubToken = this[K.ghToken] ?: d.githubToken,
         )
     }
 
+    private fun MutablePreferences.write(s: AppSettings) {
+        this[K.url] = s.serverUrl
+        this[K.apiKey] = s.apiKey
+        this[K.rewrite] = s.rewriteHost
+        this[K.resume] = s.resumePlayback
+        this[K.track] = s.trackActivity
+        this[K.playAfter] = s.playCountAfterSeconds
+        this[K.animated] = s.animatedPreviews
+        this[K.gridWidth] = s.gridCardWidth
+        this[K.accent] = s.accent
+        this[K.homeLayout] = s.homeLayout
+        this[K.updChannel] = s.updateChannel
+        this[K.updAuto] = s.autoUpdateCheck
+        this[K.updNotify] = s.updateNotify
+        this[K.updRepo] = s.updateRepo
+        this[K.ghToken] = s.githubToken
+    }
+
+    val settings: Flow<AppSettings> = context.dataStore.data.map { it.toSettings() }
+
     suspend fun saveServer(url: String, apiKey: String) {
-        context.dataStore.edit {
-            it[Keys.url] = url.trim().trimEnd('/')
-            it[Keys.apiKey] = apiKey.trim()
-        }
+        update { it.copy(serverUrl = url.trim().trimEnd('/'), apiKey = apiKey.trim()) }
     }
 
     suspend fun clearServer() {
-        context.dataStore.edit {
-            it.remove(Keys.url)
-            it.remove(Keys.apiKey)
-        }
+        update { it.copy(serverUrl = "", apiKey = "") }
     }
 
-    suspend fun update(transform: (AppSettings) -> AppSettings, current: AppSettings) {
-        val next = transform(current)
-        context.dataStore.edit {
-            it[Keys.rewrite] = next.rewriteHost
-            it[Keys.resume] = next.resumePlayback
-            it[Keys.track] = next.trackActivity
-            it[Keys.playAfter] = next.playCountAfterSeconds
-            it[Keys.animated] = next.animatedPreviews
-            it[Keys.gridWidth] = next.gridCardWidth
-        }
+    /** Atomic read-modify-write of all settings. */
+    suspend fun update(transform: (AppSettings) -> AppSettings) {
+        context.dataStore.edit { p -> p.write(transform(p.toSettings())) }
     }
 }
