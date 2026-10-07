@@ -11,9 +11,6 @@ import android.view.ViewGroup
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -87,6 +84,8 @@ import kotlinx.coroutines.withContext
  * - direct stream first, falls back through Stash's transcode endpoints on error
  * - resume point, play count and watch time synced back to Stash
  * - markers as chapters, playback speed, PiP, auto orientation
+ * - double-tap left/right to skip 5s back / 15s ahead (keep tapping to keep skipping),
+ *   swipe the left side for brightness and the right side for volume, mute button
  */
 @OptIn(UnstableApi::class)
 class PlayerActivity : ComponentActivity() {
@@ -118,7 +117,6 @@ class PlayerActivity : ComponentActivity() {
     private var streams by mutableStateOf<List<StreamEndpoint>>(emptyList())
     private var streamIndex by mutableStateOf(0)
     private var markers by mutableStateOf<List<Marker>>(emptyList())
-    private var controlsVisible by mutableStateOf(true)
     private var inPip by mutableStateOf(false)
     private var speed by mutableStateOf(1f)
 
@@ -358,32 +356,28 @@ class PlayerActivity : ComponentActivity() {
 
     @Composable
     private fun PlayerScreen() {
+        val ui = rememberPlaybackUi(player)
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             AndroidView(
                 factory = { ctx ->
                     PlayerView(ctx).apply {
                         layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                         player = this@PlayerActivity.player
+                        // Our own Compose controls (PlayerControls.kt) replace ExoPlayer's, so taps
+                        // and swipes all reach the gesture layer.
+                        useController = false
                         keepScreenOn = true
                         resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        setShowNextButton(false)
-                        setShowPreviousButton(false)
-                        setShowSubtitleButton(true)
-                        controllerShowTimeoutMs = 3500
-                        setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v ->
-                            controlsVisible = v == android.view.View.VISIBLE
-                        })
+                        setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
                     }
                 },
-                update = { it.useController = !inPip },
                 modifier = Modifier.fillMaxSize(),
             )
 
-            AnimatedVisibility(
-                controlsVisible && !inPip, enter = fadeIn(), exit = fadeOut(),
-                modifier = Modifier.align(Alignment.TopStart),
-            ) {
-                TopBar()
+            if (!inPip) {
+                PlayerOverlay(player, ui, window, markers) {
+                    Box(Modifier.align(Alignment.TopCenter).fillMaxWidth()) { TopBar(ui) }
+                }
             }
         }
 
@@ -424,14 +418,13 @@ class PlayerActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun TopBar() {
+    private fun TopBar(ui: PlaybackUi) {
         var streamMenu by remember { mutableStateOf(false) }
         var markerMenu by remember { mutableStateOf(false) }
         var speedMenu by remember { mutableStateOf(false) }
         Row(
             Modifier
                 .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.45f))
                 .safeDrawingPadding()
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -446,7 +439,7 @@ class PlayerActivity : ComponentActivity() {
 
             if (markers.isNotEmpty()) {
                 Box {
-                    IconButton(onClick = { markerMenu = true }) { Icon(Icons.Filled.Bookmarks, "Markers", tint = Color.White) }
+                    IconButton(onClick = { markerMenu = true; ui.poke() }) { Icon(Icons.Filled.Bookmarks, "Markers", tint = Color.White) }
                     DropdownMenu(expanded = markerMenu, onDismissRequest = { markerMenu = false }) {
                         markers.forEach { m ->
                             DropdownMenuItem(
@@ -455,6 +448,7 @@ class PlayerActivity : ComponentActivity() {
                                     markerMenu = false
                                     player.seekTo((m.seconds * 1000).toLong())
                                     player.play()
+                                    ui.poke()
                                 },
                             )
                         }
@@ -463,7 +457,7 @@ class PlayerActivity : ComponentActivity() {
             }
 
             Box {
-                IconButton(onClick = { speedMenu = true }) { Icon(Icons.Filled.Speed, "Speed", tint = Color.White) }
+                IconButton(onClick = { speedMenu = true; ui.poke() }) { Icon(Icons.Filled.Speed, "Speed", tint = Color.White) }
                 DropdownMenu(expanded = speedMenu, onDismissRequest = { speedMenu = false }) {
                     listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).forEach { sp ->
                         DropdownMenuItem(
@@ -476,7 +470,7 @@ class PlayerActivity : ComponentActivity() {
 
             if (streams.size > 1) {
                 Box {
-                    IconButton(onClick = { streamMenu = true }) { Icon(Icons.Filled.HighQuality, "Stream", tint = Color.White) }
+                    IconButton(onClick = { streamMenu = true; ui.poke() }) { Icon(Icons.Filled.HighQuality, "Stream", tint = Color.White) }
                     DropdownMenu(expanded = streamMenu, onDismissRequest = { streamMenu = false }) {
                         streams.forEachIndexed { i, s ->
                             DropdownMenuItem(
@@ -491,7 +485,8 @@ class PlayerActivity : ComponentActivity() {
             if (sceneId != null) {
                 IconButton(onClick = { openMarkerForm() }) { Icon(Icons.Filled.BookmarkAdd, "Add marker here", tint = Color.White) }
             }
-            IconButton(onClick = { toggleOrientation() }) { Icon(Icons.Filled.ScreenRotation, "Rotate", tint = Color.White) }
+            MuteButton(ui)
+            IconButton(onClick = { toggleOrientation(); ui.poke() }) { Icon(Icons.Filled.ScreenRotation, "Rotate", tint = Color.White) }
             IconButton(onClick = { enterPip() }) { Icon(Icons.Filled.PictureInPictureAlt, "Picture in picture", tint = Color.White) }
         }
     }
