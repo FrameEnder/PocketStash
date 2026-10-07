@@ -11,6 +11,10 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
 import com.frameender.pocketstash.data.AppSettings
 import com.frameender.pocketstash.data.Connection
+import com.frameender.pocketstash.data.OfflineRefreshScheduler
+import com.frameender.pocketstash.data.OfflineSaver
+import com.frameender.pocketstash.data.ResponseCache
+import com.frameender.pocketstash.player.PlayerPrefs
 import com.frameender.pocketstash.data.SettingsStore
 import com.frameender.pocketstash.data.StashClient
 import com.frameender.pocketstash.data.StashRepository
@@ -35,7 +39,10 @@ class AppContainer(context: Context) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val settingsStore = SettingsStore(context)
     val connection = Connection()
-    val client = StashClient(connection)
+
+    /** Saved GraphQL answers (see ResponseCache); serves screens when the server is unreachable. */
+    val responseCache = ResponseCache(context.cacheDir.resolve("graphql"))
+    val client = StashClient(connection, responseCache)
     val repository = StashRepository(client, connection)
 
     /** null until DataStore has been read once. */
@@ -43,10 +50,17 @@ class AppContainer(context: Context) {
         .onEach {
             connection.settings = it
             Accents.select(it.accent)
+            PlayerPrefs.startMuted = it.startMuted
         }
         .stateIn(appScope, SharingStarted.Eagerly, null)
 
     val updater = Updater(context, connection.http) { settings.value ?: AppSettings() }
+
+    val offlineSaver = OfflineSaver(
+        context, repository, appScope,
+        settings = { settings.filterNotNull().first() },
+        update = { t -> settingsStore.update(t) },
+    )
 
     /** Screen to open from outside the UI (e.g. tapping the update notification). */
     val pendingRoute = MutableStateFlow<String?>(null)
@@ -56,6 +70,11 @@ class AppContainer(context: Context) {
         appScope.launch {
             settings.filterNotNull().map { it.autoUpdateCheck }.distinctUntilChanged().collect { enabled ->
                 UpdateScheduler.apply(context, enabled)
+            }
+        }
+        appScope.launch {
+            settings.filterNotNull().map { it.offlineAutoRefresh }.distinctUntilChanged().collect { enabled ->
+                OfflineRefreshScheduler.apply(context, enabled)
             }
         }
         appScope.launch {
@@ -82,7 +101,8 @@ class PocketStashApp : Application(), SingletonImageLoader.Factory {
             .diskCache {
                 DiskCache.Builder()
                     .directory(context.cacheDir.resolve("image_cache"))
-                    .maxSizeBytes(512L * 1024 * 1024)
+                    // Size from Settings → Storage & offline (applies on the next start).
+                    .maxSizeBytes((container.settings.value?.imageCacheMb ?: 512).coerceIn(128, 8192).toLong() * 1024 * 1024)
                     .build()
             }
             .crossfade(true)

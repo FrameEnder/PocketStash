@@ -3,16 +3,14 @@ package com.frameender.pocketstash.ui.settings
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,28 +19,23 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.NewReleases
+import androidx.compose.material.icons.filled.Science
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -62,18 +55,17 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.frameender.pocketstash.container
 import com.frameender.pocketstash.data.AppSettings
+import com.frameender.pocketstash.data.Format
 import com.frameender.pocketstash.data.UpdateCheck
 import com.frameender.pocketstash.ui.common.friendly
-import com.frameender.pocketstash.ui.components.InfoRow
-import com.frameender.pocketstash.ui.nav.LocalNavigator
 import com.frameender.pocketstash.ui.theme.Ink
 import com.frameender.pocketstash.ui.theme.Mono
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+private val D = SettingsDefaults
+
 @Composable
 fun UpdatesScreen() {
-    val nav = LocalNavigator.current
     val context = LocalContext.current
     val container = context.container
     val updater = container.updater
@@ -92,66 +84,33 @@ fun UpdatesScreen() {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { canInstall = updater.canInstall() }
     LaunchedEffect(Unit) { if (result == null && !checking) updater.check() }
 
-    fun change(t: (AppSettings) -> AppSettings) = scope.launch { container.settingsStore.update(t) }
-
     val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        change { it.copy(updateNotify = granted) }
-        if (!granted) Toast.makeText(context, "Notifications are off for PocketStash", Toast.LENGTH_LONG).show()
+        context.updateSettings { it.copy(updateNotify = granted) }
+        if (!granted) context.toast("Notifications are off for PocketStash")
     }
 
     val fieldColors = OutlinedTextFieldDefaults.colors(
         unfocusedBorderColor = Ink.Line, focusedBorderColor = Ink.Amber,
-        unfocusedContainerColor = Ink.Surface, focusedContainerColor = Ink.Surface,
+        unfocusedContainerColor = Ink.Bg, focusedContainerColor = Ink.Bg,
     )
 
-    Scaffold(
-        containerColor = Ink.Bg,
-        topBar = {
-            TopAppBar(
-                title = { Text("Updates") },
-                navigationIcon = { IconButton(onClick = { nav.back() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Ink.Bg),
-            )
-        },
-    ) { pad ->
-        Column(
-            Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            SettingsCard("Installed") {
-                InfoRow("Version", updater.installedVersionName())
-                InfoRow("Build", updater.installedVersionCode().toString())
-            }
-
-            SettingsCard("Channel") {
-                val options = listOf("stable" to "Stable", "nightly" to "Nightly")
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    options.forEachIndexed { i, (key, label) ->
-                        SegmentedButton(
-                            selected = s.updateChannel == key,
-                            onClick = {
-                                scope.launch {
-                                    container.settingsStore.update { it.copy(updateChannel = key) }
-                                    updater.check(s.copy(updateChannel = key))
-                                }
-                            },
-                            shape = SegmentedButtonDefaults.itemShape(i, options.size),
-                            colors = SegmentedButtonDefaults.colors(
-                                activeContainerColor = Ink.AmberDim, activeContentColor = Ink.Text,
-                                inactiveContainerColor = Ink.Surface, inactiveContentColor = Ink.Muted,
-                            ),
-                        ) { Text(label) }
+    SettingsPage("Updates") {
+        // ---------------- status ----------------
+        Spacer(Modifier.height(8.dp))
+        SettingsCard {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconTile(Icons.Filled.NewReleases, Ink.Amber, size = 44)
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("PocketStash ${updater.installedVersionName()}", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Build ${updater.installedVersionCode()} · ${s.updateChannel} channel",
+                            style = MaterialTheme.typography.labelMedium, color = Ink.Muted,
+                        )
                     }
                 }
-                Text(
-                    if (s.updateChannel == "nightly") "Every push to main. Newest features, may be rough."
-                    else "Tagged releases only.",
-                    style = MaterialTheme.typography.bodySmall, color = Ink.Muted,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-            }
-
-            SettingsCard("Status") {
+                Spacer(Modifier.height(14.dp))
                 when {
                     checking -> Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(color = Ink.Amber, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
@@ -170,26 +129,24 @@ fun UpdatesScreen() {
                     }
                     result is UpdateCheck.Available -> {
                         val info = (result as UpdateCheck.Available).info
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.SystemUpdate, null, tint = Ink.Amber, modifier = Modifier.size(22.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Column {
-                                Text(info.title, style = MaterialTheme.typography.titleMedium)
+                        Text(info.title, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            listOfNotNull(
+                                "build ${info.versionCode}",
+                                info.asset.size.takeIf { it > 0 }?.let { Format.bytes(it) },
+                                info.release.publishedAt?.let { Format.ago(it) },
+                            ).joinToString(" · "),
+                            style = MaterialTheme.typography.labelMedium, color = Ink.Muted,
+                        )
+                        info.release.body?.takeIf { it.isNotBlank() }?.let {
+                            Spacer(Modifier.height(10.dp))
+                            Surface(color = Ink.Bg, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
                                 Text(
-                                    "Build ${info.versionCode} · ${"%.1f".format(info.asset.size / 1_048_576.0)} MB" +
-                                        (info.release.publishedAt?.let { " · ${it.take(10)}" } ?: ""),
-                                    style = MaterialTheme.typography.labelMedium, color = Ink.Muted,
+                                    it.trim(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()).padding(10.dp),
                                 )
                             }
-                        }
-                        info.release.body?.takeIf { it.isNotBlank() }?.let {
-                            Text(
-                                it.trim(),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Ink.Text.copy(alpha = 0.85f),
-                                maxLines = 14,
-                                modifier = Modifier.padding(top = 10.dp),
-                            )
                         }
                         Spacer(Modifier.height(12.dp))
                         progress?.let { p ->
@@ -216,7 +173,7 @@ fun UpdatesScreen() {
                                             val f = downloaded?.takeIf { it.name == info.asset.name } ?: updater.download(info)
                                             updater.install(context, f)
                                         } catch (e: Exception) {
-                                            Toast.makeText(context, e.friendly(), Toast.LENGTH_LONG).show()
+                                            context.toast(e.friendly())
                                         } finally {
                                             busy = false
                                         }
@@ -235,23 +192,71 @@ fun UpdatesScreen() {
                 Spacer(Modifier.height(10.dp))
                 OutlinedButton(onClick = { scope.launch { updater.check() } }, enabled = !checking) { Text("Check now") }
             }
+        }
 
-            SettingsCard("Automatic") {
-                Toggle("Check for updates automatically", s.autoUpdateCheck, "On launch and every 6 hours") { v ->
-                    change { it.copy(autoUpdateCheck = v) }
-                }
-                Toggle("Notify me about new builds", s.updateNotify, "A notification once per new build") { v ->
-                    if (v && Build.VERSION.SDK_INT >= 33 &&
-                        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-                    ) {
-                        notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    } else {
-                        change { it.copy(updateNotify = v) }
-                    }
+        // ---------------- channel ----------------
+        GroupLabel("Channel")
+        SegmentedSetting(
+            listOf(
+                Triple("stable", "Stable", Icons.Filled.Verified),
+                Triple("nightly", "Nightly", Icons.Filled.Science),
+            ),
+            selected = s.updateChannel,
+        ) { key ->
+            context.updateSettings { it.copy(updateChannel = key) }
+            scope.launch { updater.check(s.copy(updateChannel = key)) }
+        }
+        Hint(
+            if (s.updateChannel == "nightly") "Every push to main. Newest features, may be rough."
+            else "Tagged releases only. Their notes list every change since the previous release.",
+        )
+
+        // ---------------- automatic ----------------
+        GroupLabel("Automatic")
+        SettingsCard {
+            SwitchSetting(
+                "Check for updates automatically", "On launch, when you come back after 30 minutes, and every 6 hours",
+                s.autoUpdateCheck,
+                onReset = { it.copy(autoUpdateCheck = D.autoUpdateCheck) },
+            ) { v -> context.updateSettings { it.copy(autoUpdateCheck = v) } }
+            CardDivider()
+            SwitchSetting(
+                "Notify me about new builds", "A notification, plus a pop-up in the app",
+                s.updateNotify,
+                enabled = s.autoUpdateCheck,
+                onReset = { it.copy(updateNotify = D.updateNotify) },
+            ) { v ->
+                if (v && Build.VERSION.SDK_INT >= 33 &&
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                } else {
+                    context.updateSettings { it.copy(updateNotify = v) }
                 }
             }
+            if (s.skippedUpdate > 0) {
+                CardDivider()
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Pop-up skipped for build ${s.skippedUpdate}",
+                        style = MaterialTheme.typography.bodySmall, color = Ink.Muted, modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = {
+                        context.updateSettings { it.copy(skippedUpdate = 0) }
+                        updater.popupDismissed.value = 0
+                    }) { Text("Show again", maxLines = 1) }
+                }
+            }
+        }
+        Hint("The pop-up offers Update now, Later (until the app next opens), or Skip this build.")
 
-            SettingsCard("Source") {
+        // ---------------- source ----------------
+        GroupLabel("Source")
+        SettingsCard {
+            Column(Modifier.padding(14.dp)) {
                 var repo by remember(s.updateRepo) { mutableStateOf(s.updateRepo) }
                 var token by remember(s.githubToken) { mutableStateOf(s.githubToken) }
                 OutlinedTextField(
@@ -275,22 +280,19 @@ fun UpdatesScreen() {
                     shape = RoundedCornerShape(12.dp), colors = fieldColors,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Text(
-                    "Use a fine-grained token with read-only Contents access to this repo. Leave blank if the repo is public.",
-                    style = MaterialTheme.typography.bodySmall, color = Ink.Muted,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = {
-                        scope.launch {
-                            container.settingsStore.update { it.copy(updateRepo = repo.trim(), githubToken = token.trim()) }
-                            updater.check(s.copy(updateRepo = repo.trim(), githubToken = token.trim()))
-                        }
-                    },
-                    enabled = repo.trim() != s.updateRepo || token.trim() != s.githubToken,
-                ) { Text("Save & check") }
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    TextButton(onClick = { repo = D.updateRepo }) { Text("Default", maxLines = 1) }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(
+                        onClick = {
+                            context.updateSettings { it.copy(updateRepo = repo.trim(), githubToken = token.trim()) }
+                            scope.launch { updater.check(s.copy(updateRepo = repo.trim(), githubToken = token.trim())) }
+                        },
+                        enabled = repo.trim() != s.updateRepo || token.trim() != s.githubToken,
+                    ) { Text("Save & check", maxLines = 1) }
+                }
             }
         }
+        Hint("Use a fine-grained token with read-only Contents access to this repo. Leave it blank if the repo is public.")
     }
 }

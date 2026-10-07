@@ -14,9 +14,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # full history and tags, so release notes can list every commit since the last release
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -65,12 +67,37 @@ jobs:
           name: PocketStash-apk
           path: out/*.apk
 
+      # Stable release notes: every commit since the previous v* tag (all the nightlies in between).
+      - name: Write release notes (tags only)
+        if: github.ref_type == 'tag'
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          PREV=$(git describe --tags --abbrev=0 --match 'v*' "$TAG^" 2>/dev/null || true)
+          {
+            if [ -n "$PREV" ]; then
+              echo "## Changes since $PREV"
+              RANGE="$PREV..$TAG"
+            else
+              echo "## Changes"
+              RANGE="$TAG"
+            fi
+            echo
+            git log --no-merges --reverse --pretty='format:- %s (%h)' "$RANGE"
+            echo
+            if [ -n "$PREV" ]; then
+              echo
+              echo "**Full changelog:** https://github.com/$GITHUB_REPOSITORY/compare/$PREV...$TAG"
+            fi
+          } > release-notes.md
+          cat release-notes.md
+
+      # Stable channel: pushing a tag like v0.2.0 publishes a normal release.
       - name: Publish GitHub release (tags only)
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           files: out/*.apk
-          generate_release_notes: true
+          body_path: release-notes.md
 
       # Nightly channel: every push to main replaces the rolling "nightly" pre-release.
       # The in-app updater reads the build number from the APK name (PocketStash-<run>.apk).

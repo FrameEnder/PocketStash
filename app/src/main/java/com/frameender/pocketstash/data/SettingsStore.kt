@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -43,6 +44,20 @@ data class AppSettings(
     val updateNotify: Boolean = false,
     val updateRepo: String = "FrameEnder/PocketStash",
     val githubToken: String = "",                  // only needed while the repo is private
+    val skippedUpdate: Long = 0,                   // build number the user chose to skip in the update pop-up
+
+    // Player
+    val startMuted: Boolean = false,
+
+    // Storage & offline
+    /** When the server can't be reached, open screens from saved copies. */
+    val offlineFallback: Boolean = true,
+    /** Re-save every offline collection once a day (Wi-Fi + charging). */
+    val offlineAutoRefresh: Boolean = false,
+    /** Coil's image disk cache, in MB. Applies on the next app start. */
+    val imageCacheMb: Int = 512,
+    /** JSON list of OfflineCollection. */
+    val offlineCollections: String = "",
 ) {
     val baseUrl: HttpUrl? get() = normalizeServerUrl(serverUrl)
     val isConfigured: Boolean get() = baseUrl != null
@@ -73,6 +88,12 @@ class SettingsStore(private val context: Context) {
         val updNotify = booleanPreferencesKey("upd_notify")
         val updRepo = stringPreferencesKey("upd_repo")
         val ghToken = stringPreferencesKey("gh_token")
+        val updSkip = longPreferencesKey("upd_skip")
+        val startMuted = booleanPreferencesKey("start_muted")
+        val offFallback = booleanPreferencesKey("offline_fallback")
+        val offRefresh = booleanPreferencesKey("offline_refresh")
+        val imgCache = intPreferencesKey("image_cache_mb")
+        val offCollections = stringPreferencesKey("offline_collections")
     }
 
     private fun Preferences.toSettings(): AppSettings {
@@ -93,6 +114,12 @@ class SettingsStore(private val context: Context) {
             updateNotify = this[K.updNotify] ?: d.updateNotify,
             updateRepo = this[K.updRepo] ?: d.updateRepo,
             githubToken = this[K.ghToken] ?: d.githubToken,
+            skippedUpdate = this[K.updSkip] ?: d.skippedUpdate,
+            startMuted = this[K.startMuted] ?: d.startMuted,
+            offlineFallback = this[K.offFallback] ?: d.offlineFallback,
+            offlineAutoRefresh = this[K.offRefresh] ?: d.offlineAutoRefresh,
+            imageCacheMb = this[K.imgCache] ?: d.imageCacheMb,
+            offlineCollections = this[K.offCollections] ?: d.offlineCollections,
         )
     }
 
@@ -112,6 +139,12 @@ class SettingsStore(private val context: Context) {
         this[K.updNotify] = s.updateNotify
         this[K.updRepo] = s.updateRepo
         this[K.ghToken] = s.githubToken
+        this[K.updSkip] = s.skippedUpdate
+        this[K.startMuted] = s.startMuted
+        this[K.offFallback] = s.offlineFallback
+        this[K.offRefresh] = s.offlineAutoRefresh
+        this[K.imgCache] = s.imageCacheMb
+        this[K.offCollections] = s.offlineCollections
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { it.toSettings() }

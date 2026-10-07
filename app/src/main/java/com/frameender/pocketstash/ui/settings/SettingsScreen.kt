@@ -1,14 +1,10 @@
 package com.frameender.pocketstash.ui.settings
 
+import android.os.SystemClock
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,22 +19,27 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.outlined.Dashboard
-import androidx.compose.material.icons.outlined.SystemUpdate
+import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -47,253 +48,303 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.frameender.pocketstash.container
 import com.frameender.pocketstash.data.AppSettings
-import com.frameender.pocketstash.data.formatBytes
-import com.frameender.pocketstash.data.model.ServerInfo
-import com.frameender.pocketstash.data.model.Stats
-import com.frameender.pocketstash.ui.common.friendly
-import com.frameender.pocketstash.ui.components.InfoRow
-import com.frameender.pocketstash.ui.components.Pill
-import com.frameender.pocketstash.ui.components.StatTile
+import com.frameender.pocketstash.data.HomeLayouts
 import com.frameender.pocketstash.ui.nav.LocalNavigator
 import com.frameender.pocketstash.ui.theme.Accents
 import com.frameender.pocketstash.ui.theme.Ink
-import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+/**
+ * The Settings pages. [key] goes in the route (SettingsSectionRoute); Home screen and Updates
+ * have their own screens elsewhere in the app.
+ */
+enum class SettingsSection(val key: String, val title: String, val icon: ImageVector, val tint: Color) {
+    SERVER("server", "Server & connection", Icons.Filled.Dns, Color(0xFFF2A93B)),
+    APPEARANCE("appearance", "Appearance", Icons.Filled.Palette, Color(0xFFF48FB1)),
+    HOME("home", "Home screen", Icons.Filled.Dashboard, Color(0xFF6FA8F0)),
+    PLAYER("player", "Player", Icons.Filled.PlayCircle, Color(0xFF8BC37A)),
+    LIBRARY("library", "Library stats", Icons.Filled.BarChart, Color(0xFFB394E8)),
+    STORAGE("storage", "Storage & offline", Icons.Filled.CloudOff, Color(0xFF7DB8B5)),
+    UPDATES("updates", "Updates", Icons.Filled.SystemUpdate, Color(0xFFE6C15A)),
+    ABOUT("about", "About", Icons.Filled.Info, Color(0xFF9A958C));
+
+    companion object {
+        fun of(key: String?): SettingsSection? = entries.firstOrNull { it.key == key }
+    }
+}
+
+/** One searchable setting: its name, other words people might type, and its page. */
+private data class SettingEntry(val title: String, val section: SettingsSection, val keywords: String = "")
+
+private val SEARCH_INDEX = listOf(
+    SettingEntry("Server address", SettingsSection.SERVER, "url host ip port tailscale connect stash"),
+    SettingEntry("API key", SettingsSection.SERVER, "key token password auth security login"),
+    SettingEntry("Rewrite media URLs", SettingsSection.SERVER, "reverse proxy docker thumbnails host broken images"),
+    SettingEntry("Disconnect", SettingsSection.SERVER, "log out sign out forget server"),
+    SettingEntry("Highlight color", SettingsSection.APPEARANCE, "accent theme colour amber pink blue"),
+    SettingEntry("Card size", SettingsSection.APPEARANCE, "grid columns thumbnails width zoom"),
+    SettingEntry("Customize Home sections", SettingsSection.HOME, "layout dashboard widgets carousel start screen"),
+    SettingEntry("Resume where you left off", SettingsSection.PLAYER, "resume continue position"),
+    SettingEntry("Start muted", SettingsSection.PLAYER, "sound audio volume mute"),
+    SettingEntry("Send play activity to Stash", SettingsSection.PLAYER, "play count history o counter watch time tracking"),
+    SettingEntry("Count a play after", SettingsSection.PLAYER, "play count threshold seconds"),
+    SettingEntry("Player gestures", SettingsSection.PLAYER, "double tap seek skip brightness volume swipe"),
+    SettingEntry("Library stats", SettingsSection.LIBRARY, "size count scenes runtime watched"),
+    SettingEntry("Saved for offline", SettingsSection.STORAGE, "offline collections download refresh"),
+    SettingEntry("Use saved copies offline", SettingsSection.STORAGE, "offline tailscale down unreachable"),
+    SettingEntry("Refresh saved lists daily", SettingsSection.STORAGE, "offline background wifi charging"),
+    SettingEntry("Image cache size", SettingsSection.STORAGE, "storage space disk thumbnails"),
+    SettingEntry("Clear cache", SettingsSection.STORAGE, "storage space free delete"),
+    SettingEntry("Update channel", SettingsSection.UPDATES, "stable nightly release version"),
+    SettingEntry("Update notifications", SettingsSection.UPDATES, "notify pop-up background check"),
+    SettingEntry("GitHub token", SettingsSection.UPDATES, "private repo"),
+    SettingEntry("Version & licenses", SettingsSection.ABOUT, "about build fonts github"),
+)
+
+private fun mb(n: Int) = if (n >= 1024) "${n / 1024} GB" else "$n MB"
+
+/** Live summary shown under each category on the main page. */
+private fun summary(section: SettingsSection, s: AppSettings, saved: Int, version: String, build: Long): String = when (section) {
+    SettingsSection.SERVER -> s.baseUrl?.let { it.host + ":" + it.port } ?: "Not set up"
+    SettingsSection.APPEARANCE ->
+        (Accents.all.firstOrNull { it.key == s.accent }?.label ?: "Amber") + " highlight · ${s.gridCardWidth} dp cards"
+    SettingsSection.HOME ->
+        if (s.homeLayout.isBlank()) "Default layout"
+        else "Custom layout · ${HomeLayouts.decode(s.homeLayout).count { it.enabled }} sections"
+    SettingsSection.PLAYER -> listOf(
+        if (s.resumePlayback) "Resume on" else "Resume off",
+        if (s.startMuted) "start muted" else "sound on",
+        if (s.trackActivity) "tracking plays" else "not tracking",
+    ).joinToString(" · ")
+    SettingsSection.LIBRARY -> "Counts, sizes and watch time"
+    SettingsSection.STORAGE ->
+        "${mb(s.imageCacheMb)} image cache · " + if (saved == 0) "nothing saved offline" else "$saved saved for offline"
+    SettingsSection.UPDATES ->
+        s.updateChannel.replaceFirstChar { it.uppercase() } + " channel · " + if (s.autoUpdateCheck) "checks every 6 h" else "manual checks"
+    SettingsSection.ABOUT -> "PocketStash $version · build $build"
+}
+
+private val GROUPS = listOf(
+    "Look & feel" to listOf(SettingsSection.APPEARANCE, SettingsSection.HOME),
+    "Watching" to listOf(SettingsSection.PLAYER),
+    "Data" to listOf(SettingsSection.LIBRARY, SettingsSection.STORAGE),
+    "App" to listOf(SettingsSection.UPDATES, SettingsSection.ABOUT),
+)
+
+/**
+ * The main Settings page: a search box, the connection card, and every category with a
+ * live one-line summary of what's set inside it.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onDisconnected: () -> Unit) {
+fun SettingsScreen() {
     val nav = LocalNavigator.current
-    val container = LocalContext.current.container
+    val context = LocalContext.current
+    val container = context.container
     val settings by container.settings.collectAsState()
+    val s = settings ?: AppSettings()
     val update by container.updater.available.collectAsState()
-    val scope = rememberCoroutineScope()
-    var info by remember { mutableStateOf<ServerInfo?>(null) }
-    var stats by remember { mutableStateOf<Stats?>(null) }
-    var infoError by remember { mutableStateOf<String?>(null) }
+    var query by rememberSaveable { mutableStateOf("") }
+    val version = remember { container.updater.installedVersionName() }
+    val build = remember { container.updater.installedVersionCode() }
+    val saved = container.offlineSaver.collections(s).size
 
-    LaunchedEffect(Unit) {
-        try {
-            info = container.repository.serverInfo()
-            stats = container.repository.stats()
-        } catch (e: Exception) {
-            infoError = e.friendly()
+    fun open(section: SettingsSection) {
+        when (section) {
+            SettingsSection.HOME -> nav.homeLayout()
+            SettingsSection.UPDATES -> nav.updates()
+            else -> nav.settingsSection(section.key)
         }
     }
-
-    val s = settings ?: AppSettings()
-    fun change(t: (AppSettings) -> AppSettings) = scope.launch { container.settingsStore.update(t) }
 
     Scaffold(
         containerColor = Ink.Bg,
         topBar = {
             TopAppBar(
-                title = { Text("Settings") },
+                title = {},
                 navigationIcon = { IconButton(onClick = { nav.back() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+                actions = {
+                    IconButton(onClick = { nav.openExternal("https://github.com/${s.updateRepo.trim('/')}#readme") }) {
+                        Icon(Icons.AutoMirrored.Filled.HelpOutline, "Help")
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Ink.Bg),
             )
         },
     ) { pad ->
         Column(
-            Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            Modifier
+                .padding(pad)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(start = 16.dp, end = 16.dp, bottom = 32.dp),
         ) {
-            SettingsCard("Server") {
-                InfoRow("URL", s.baseUrl?.toString())
-                InfoRow("API key", if (s.apiKey.isBlank()) "none" else "•••• ${s.apiKey.takeLast(4)}")
-                InfoRow("Version", info?.version)
-                InfoRow("Status", info?.status)
-                infoError?.let { Text(it, color = Ink.Red, style = MaterialTheme.typography.bodySmall) }
-                Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { nav.setup() }) { Text("Change server") }
-                    TextButton(onClick = {
-                        scope.launch {
-                            container.settingsStore.clearServer()
-                            onDisconnected()
-                        }
-                    }) { Text("Disconnect", color = Ink.Red) }
+            Text("Settings", style = MaterialTheme.typography.displaySmall, modifier = Modifier.padding(start = 4.dp, bottom = 12.dp))
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Search settings") },
+                leadingIcon = { Icon(Icons.Filled.Search, null) },
+                trailingIcon = {
+                    if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Filled.Clear, "Clear") }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedBorderColor = Ink.Line, focusedBorderColor = Ink.Amber,
+                    unfocusedContainerColor = Ink.Surface, focusedContainerColor = Ink.Surface,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            val q = query.trim()
+            if (q.isNotEmpty()) {
+                val words = q.split(' ').filter { it.isNotBlank() }
+                val hits = SEARCH_INDEX.filter { e ->
+                    words.all { w -> e.title.contains(w, true) || e.keywords.contains(w, true) || e.section.title.contains(w, true) }
                 }
-            }
+                GroupLabel(if (hits.isEmpty()) "No matches" else "${hits.size} matches")
+                if (hits.isNotEmpty()) {
+                    SettingsCard {
+                        hits.forEachIndexed { i, e ->
+                            if (i > 0) CardDivider()
+                            NavRow(e.section.icon, e.section.tint, e.title, e.section.title) { open(e.section) }
+                        }
+                    }
+                } else {
+                    Hint("Try words like “cache”, “mute”, “offline” or “proxy”.")
+                }
+            } else {
+                Spacer(Modifier.height(14.dp))
+                ConnectionCard(s) { open(SettingsSection.SERVER) }
 
-            SettingsCard("App") {
-                NavRow(
-                    Icons.Outlined.SystemUpdate, "Updates",
-                    if (update != null) "Build ${update!!.versionCode} available" else "Channel: ${s.updateChannel}",
-                    badge = if (update != null) "NEW" else null,
-                ) { nav.updates() }
-                NavRow(Icons.Outlined.Dashboard, "Customize Home", "Pick, order and tune the Home sections") { nav.homeLayout() }
-            }
-
-            SettingsCard("Highlight color") {
-                AccentPicker(s.accent) { key -> change { it.copy(accent = key) } }
-            }
-
-            stats?.let { st ->
-                SettingsCard("Library stats") {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StatTile("Scenes", "%,d".format(st.sceneCount))
-                        StatTile("Scene size", formatBytes(st.scenesSize))
-                        StatTile("Runtime", "%,.0f h".format(st.scenesDuration / 3600))
-                        StatTile("Images", "%,d".format(st.imageCount))
-                        StatTile("Image size", formatBytes(st.imagesSize))
-                        StatTile("Galleries", "%,d".format(st.galleryCount))
-                        StatTile("Performers", "%,d".format(st.performerCount))
-                        StatTile("Studios", "%,d".format(st.studioCount))
-                        StatTile("Groups", "%,d".format(st.groupCount))
-                        StatTile("Tags", "%,d".format(st.tagCount))
-                        StatTile("Plays", "%,d".format(st.totalPlayCount))
-                        StatTile("Scenes played", "%,d".format(st.scenesPlayed))
-                        StatTile("Watched", "%,.1f h".format(st.totalPlayDuration / 3600))
-                        StatTile("O count", "%,d".format(st.totalOCount))
+                GROUPS.forEach { (label, sections) ->
+                    GroupLabel(label)
+                    SettingsCard {
+                        sections.forEachIndexed { i, section ->
+                            if (i > 0) CardDivider()
+                            NavRow(
+                                icon = section.icon,
+                                tint = section.tint,
+                                title = section.title,
+                                summary = summary(section, s, saved, version, build),
+                                badge = if (section == SettingsSection.UPDATES && update != null) "NEW" else null,
+                            ) { open(section) }
+                        }
                     }
                 }
+                Hint("Long-press any setting to put it back to its default.", Modifier.padding(top = 6.dp))
             }
-
-            SettingsCard("Playback") {
-                Toggle("Resume where you left off", s.resumePlayback) { v -> change { it.copy(resumePlayback = v) } }
-                Toggle("Send play activity to Stash", s.trackActivity, "Play count, resume point and watch time") { v ->
-                    change { it.copy(trackActivity = v) }
-                }
-                Text(
-                    "Count a play after ${s.playCountAfterSeconds}s",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-                Slider(
-                    value = s.playCountAfterSeconds.toFloat(),
-                    onValueChange = { v -> change { it.copy(playCountAfterSeconds = v.toInt()) } },
-                    valueRange = 1f..120f,
-                    colors = SliderDefaults.colors(thumbColor = Ink.Amber, activeTrackColor = Ink.Amber),
-                )
-            }
-
-            SettingsCard("Display") {
-                Text("Card size: ${s.gridCardWidth}dp", style = MaterialTheme.typography.bodyMedium)
-                Slider(
-                    value = s.gridCardWidth.toFloat(),
-                    onValueChange = { v -> change { it.copy(gridCardWidth = v.toInt()) } },
-                    valueRange = 110f..280f,
-                    colors = SliderDefaults.colors(thumbColor = Ink.Amber, activeTrackColor = Ink.Amber),
-                )
-            }
-
-            SettingsCard("Network") {
-                Toggle(
-                    "Rewrite media URLs to this server",
-                    s.rewriteHost,
-                    "Fixes thumbnails/streams when Stash reports a different host (reverse proxy, Tailscale, Docker).",
-                ) { v -> change { it.copy(rewriteHost = v) } }
-            }
-
-            Text(
-                "PocketStash ${container.updater.installedVersionName()} (build ${container.updater.installedVersionCode()}) · unofficial client for stashapp/stash",
-                style = MaterialTheme.typography.labelSmall,
-                color = Ink.Muted,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            )
-            Spacer(Modifier.height(24.dp))
         }
     }
 }
 
+/** Which server, whether it answers, its Stash version and response time. */
 @Composable
-internal fun SettingsCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(Ink.Surface)
-            .border(1.dp, Ink.Line, RoundedCornerShape(14.dp))
-            .padding(16.dp),
-    ) {
-        Text(title.uppercase(), style = MaterialTheme.typography.labelMedium, color = Ink.Amber)
-        Spacer(Modifier.height(10.dp))
-        content()
-    }
-}
-
-@Composable
-internal fun Toggle(label: String, value: Boolean, hint: String? = null, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge)
-            hint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Ink.Muted) }
+private fun ConnectionCard(s: AppSettings, onClick: () -> Unit) {
+    val container = LocalContext.current.container
+    val offline by container.connection.offline.collectAsState()
+    var ping by remember { mutableStateOf<Long?>(null) }
+    var version by remember { mutableStateOf<String?>(null) }
+    var failed by remember { mutableStateOf(false) }
+    LaunchedEffect(s.serverUrl, s.apiKey) {
+        if (!s.isConfigured) return@LaunchedEffect
+        failed = false
+        ping = null
+        val t0 = SystemClock.elapsedRealtime()
+        try {
+            version = container.repository.serverInfo().version
+            ping = SystemClock.elapsedRealtime() - t0
+        } catch (e: Exception) {
+            failed = true
         }
-        Switch(
-            checked = value,
-            onCheckedChange = onChange,
-            colors = SwitchDefaults.colors(checkedTrackColor = Ink.Amber, checkedThumbColor = Ink.Bg),
-        )
     }
-}
-
-@Composable
-private fun NavRow(icon: ImageVector, title: String, subtitle: String, badge: String? = null, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp, horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, null, tint = Ink.Amber, modifier = Modifier.size(22.dp))
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Ink.Muted)
-        }
-        badge?.let { Pill(it, accent = true); Spacer(Modifier.width(6.dp)) }
-        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = Ink.Muted)
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun AccentPicker(selected: String, onPick: (String) -> Unit) {
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+    val bad = s.isConfigured && (failed || offline)
+    val accent = if (bad) Ink.Red else Ink.Amber
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(20.dp),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.35f)),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Accents.all.forEach { a ->
-            val on = a.key == selected
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .width(64.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable { onPick(a.key) }
-                    .padding(vertical = 4.dp),
-            ) {
-                Box(
-                    Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(a.main)
-                        .border(if (on) 3.dp else 0.dp, if (on) Ink.Text else Color.Transparent, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (on) Icon(Icons.Filled.Check, null, tint = a.on, modifier = Modifier.size(20.dp))
-                }
-                Spacer(Modifier.height(4.dp))
+        Row(
+            Modifier
+                .background(Brush.linearGradient(listOf(accent.copy(alpha = 0.16f), accent.copy(alpha = 0.04f))))
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconTile(Icons.Filled.Dns, accent, size = 52)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
                 Text(
-                    a.label,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (on) a.main else Ink.Muted,
-                    maxLines = 1,
+                    when {
+                        !s.isConfigured -> "Not connected"
+                        version != null -> "Stash $version"
+                        bad -> "Stash"
+                        else -> "Connecting…"
+                    },
+                    style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.size(8.dp).clip(CircleShape).background(
+                            when {
+                                bad -> Ink.Red
+                                ping != null -> Ink.Green
+                                else -> Ink.Muted
+                            },
+                        ),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        (s.baseUrl?.let { it.host + ":" + it.port } ?: "Tap to set up your server") +
+                            when {
+                                !s.isConfigured -> ""
+                                bad -> " · unreachable"
+                                ping != null -> " · $ping ms"
+                                else -> " · checking…"
+                            },
+                        style = MaterialTheme.typography.labelSmall, color = Ink.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    when {
+                        bad && s.offlineFallback -> "Showing saved copies where there are some"
+                        s.apiKey.isBlank() -> "No API key · fine if Stash has no login"
+                        else -> "Signed in with an API key ending ${s.apiKey.takeLast(4)}"
+                    },
+                    style = MaterialTheme.typography.bodySmall, color = Ink.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = Ink.Muted)
         }
+    }
+}
+
+/** Opens one Settings page by key. */
+@Composable
+fun SettingsSectionScreen(key: String?, onDisconnected: () -> Unit) {
+    val nav = LocalNavigator.current
+    when (SettingsSection.of(key)) {
+        SettingsSection.SERVER -> ServerPage(onDisconnected)
+        SettingsSection.APPEARANCE -> AppearancePage()
+        SettingsSection.PLAYER -> PlayerPage()
+        SettingsSection.LIBRARY -> LibraryStatsPage()
+        SettingsSection.STORAGE -> StoragePage()
+        SettingsSection.ABOUT -> AboutPage()
+        else -> LaunchedEffect(Unit) { nav.back() }
     }
 }

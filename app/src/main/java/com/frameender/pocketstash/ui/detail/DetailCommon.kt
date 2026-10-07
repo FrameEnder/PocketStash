@@ -151,6 +151,7 @@ data class TabSpec(val kind: EntityKind, val count: Int?)
 fun TabbedRelated(
     scope: Scope,
     tabs: List<TabSpec>,
+    ownerName: String = "",
     header: LazyGridScope.() -> Unit,
 ) {
     val visible = tabs.filter { it.count == null || it.count > 0 }.ifEmpty { tabs.take(1) }
@@ -160,7 +161,10 @@ fun TabbedRelated(
     val vm = appViewModel("rel:$t:$id:${tab.kind}") {
         BrowseViewModel(it.repository, tab.kind, scope, BrowseSpec.defaultSort(tab.kind, scope))
     }
-    BrowseGrid(vm, showSearch = false, header = {
+    BrowseGrid(
+        vm, showSearch = false,
+        offlineLabel = listOf(ownerName, tab.kind.label).filter { it.isNotBlank() }.joinToString(" · "),
+        header = {
         header()
         if (visible.size > 1) {
             item(span = { GridItemSpan(maxLineSpan) }, key = "tabs") {

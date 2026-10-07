@@ -63,6 +63,13 @@ class Updater(
     val checking = MutableStateFlow(false)
     val lastResult = MutableStateFlow<UpdateCheck?>(null)
 
+    /** Build number whose pop-up was closed with "Later" this session (it comes back next launch). */
+    val popupDismissed = MutableStateFlow(0L)
+
+    /** When the last check finished (elapsed-realtime ms), so returning to the app can re-check. */
+    @Volatile var lastCheckAt = 0L
+        private set
+
     /** Download progress 0..1 while downloading; null otherwise. */
     val downloadProgress = MutableStateFlow<Float?>(null)
     val downloaded = MutableStateFlow<File?>(null)
@@ -119,9 +126,17 @@ class Updater(
             UpdateCheck.Failed(e.message ?: e.javaClass.simpleName)
         }
         lastResult.value = result
+        lastCheckAt = android.os.SystemClock.elapsedRealtime()
         available.value = (result as? UpdateCheck.Available)?.info
         checking.value = false
         return result
+    }
+
+    /** Checks again only if the last check is older than [maxAgeMs] (and none is running). */
+    suspend fun checkIfStale(maxAgeMs: Long) {
+        if (checking.value) return
+        if (lastCheckAt != 0L && android.os.SystemClock.elapsedRealtime() - lastCheckAt < maxAgeMs) return
+        check()
     }
 
     /** Downloads the APK into the cache (reusing an earlier finished download). */

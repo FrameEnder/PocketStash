@@ -99,9 +99,16 @@ private const val CONTROLS_HIDE_MS = 3_000L
 /** Swipes that start this close to the top edge are left to the system (notification shade). */
 private const val TOP_DEAD_ZONE = 0.08f
 
-/** Mute state for this app session, so unmuting once keeps sound on for the next scene. */
+/**
+ * Mute state for this app session, so unmuting once keeps sound on for the next scene.
+ * Starts from the "Start muted" setting until you press the mute button.
+ */
 object PlayerPrefs {
-    var muted by mutableStateOf(false)
+    private var override by mutableStateOf<Boolean?>(null)
+    var startMuted by mutableStateOf(false)
+    var muted: Boolean
+        get() = override ?: startMuted
+        set(v) { override = v }
 }
 
 /** What the controls need to know about the player, refreshed from its events and a 4 Hz poll. */

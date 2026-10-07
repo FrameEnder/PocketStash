@@ -25,6 +25,9 @@ import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.DownloadForOffline
+import android.widget.Toast
+import com.frameender.pocketstash.data.OfflineCollection
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.DropdownMenu
@@ -76,6 +79,8 @@ fun BrowseGrid(
     vm: BrowseViewModel,
     modifier: Modifier = Modifier,
     showSearch: Boolean = true,
+    /** Name used for "Save for offline" (e.g. "Scenes" or "Jane Doe · Scenes"). */
+    offlineLabel: String = vm.kind.label,
     header: LazyGridScope.() -> Unit = {},
 ) {
     val state by vm.state.collectAsState()
@@ -113,7 +118,7 @@ fun BrowseGrid(
         ) {
             header()
             item(span = { GridItemSpan(maxLineSpan) }, key = "controls") {
-                BrowseControls(vm, state, showSearch)
+                BrowseControls(vm, state, showSearch, offlineLabel)
             }
             itemsIndexed(state.items, key = { _, it -> "${it.kind}:${it.id}" }) { index, item ->
                 EntityCard(item, onClick = { nav.open(item, index, vm.scope, state.query) })
@@ -131,7 +136,9 @@ fun BrowseGrid(
 }
 
 @Composable
-private fun BrowseControls(vm: BrowseViewModel, state: BrowseState, showSearch: Boolean) {
+private fun BrowseControls(vm: BrowseViewModel, state: BrowseState, showSearch: Boolean, offlineLabel: String) {
+    val context = LocalContext.current
+    var saving by remember { mutableStateOf(false) }
     val sorts = remember(vm.kind) { BrowseSpec.sorts(vm.kind) }
     val quick = remember(vm.kind) { BrowseSpec.quickFilters(vm.kind) }
     var sortOpen by remember { mutableStateOf(false) }
@@ -209,6 +216,33 @@ private fun BrowseControls(vm: BrowseViewModel, state: BrowseState, showSearch: 
                 style = MaterialTheme.typography.labelMedium,
                 color = Ink.Muted,
             )
+            IconButton(onClick = {
+                // A random order can't be saved: it's different every time it's asked for.
+                if (q.sort == "random") Toast.makeText(context, "Pick a sort other than Random to save this list", Toast.LENGTH_LONG).show()
+                else saving = true
+            }) {
+                Icon(Icons.Filled.DownloadForOffline, "Save for offline", tint = Ink.Muted)
+            }
         }
+    }
+
+    if (saving) {
+        val (scopeType, scopeId) = OfflineCollection.scopeKey(vm.scope)
+        val sortLabel = sorts.firstOrNull { it.key == q.sort }?.label ?: q.sort
+        val label = listOfNotNull(
+            offlineLabel,
+            q.text.takeIf { it.isNotBlank() }?.let { "“${it.trim()}”" },
+            quick.filter { it.id in q.quick }.joinToString(", ") { it.label }.ifBlank { null },
+        ).joinToString(" · ")
+        SaveOfflineDialog(
+            base = OfflineCollection(
+                label = "$label ($sortLabel)",
+                kind = vm.kind.name, scopeType = scopeType, scopeId = scopeId,
+                sort = q.sort, descending = q.descending, quick = q.quick.toList(), text = q.text.trim(),
+                max = 0,
+            ),
+            total = state.total.takeIf { it > 0 },
+            onDismiss = { saving = false },
+        )
     }
 }

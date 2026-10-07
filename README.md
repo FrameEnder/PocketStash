@@ -47,7 +47,9 @@ markers, in one app made for a phone. It works over plain HTTP, so a Tailscale a
 | ✏️ **Editing** | Everything the web UI can edit: scenes, performers, studios, tags, groups, galleries, images, and markers. Search-as-you-type pickers create missing tags, performers, studios, and groups on the fly. Upload covers and images from the phone or a URL. |
 | ➕ **Create & delete** | New performers, studios, tags, groups, and galleries from their lists. Deleting scenes, images, and galleries can also remove the file and generated previews. |
 | 📐 **Any aspect ratio** | Portrait (9:16), 4:3, and ultrawide videos show whole, letterboxed on a dark backdrop instead of cropped. |
-| ⬇️ **In-app updates** | Checks GitHub Releases on launch and every 6 hours, can notify you, and downloads and installs new builds in place. Choose the **Stable** channel (tagged releases) or **Nightly** (every push). |
+| 📴 **Offline** | Every list and page you open is kept, and any list can be **saved for offline**: its pages, each entry's page, and their pictures. When your server can't be reached, those screens open from saved copies with an "Offline" pill. Saved lists can be refreshed by hand or daily on Wi-Fi while charging. |
+| ⬇️ **In-app updates** | Checks GitHub Releases on launch, when you come back after 30 minutes, and every 6 hours. With notifications on, new builds pop up in the app: **Update now**, **Later**, or **Skip this build**. Choose the **Stable** channel (tagged releases, whose notes list every commit since the last one) or **Nightly** (every push). |
+| ⚙️ **Settings** | Searchable, with a live connection card (Stash version and ping) and one page per topic: server, appearance with a live card-size preview, player, library stats, storage & offline with a usage meter, updates, and about. Long-press any setting to reset it. |
 | 🎨 **Themes** | Dark ink theme with 16 accent colors. |
 | 🌐 **Networking** | Plain HTTP on your LAN or Tailscale, user-installed CAs for self-signed HTTPS, and an option to rewrite media URLs when Stash reports a different host (reverse proxies, Docker). |
 
@@ -80,7 +82,8 @@ Stash up to date.
 1. Enter your server (e.g. `http://100.x.y.z:9999`) and your API key, then tap **Connect**.
    The key is under **Stash → Settings → Security → API Key**. Leave it blank if authentication is off.
 2. Browse from the bottom bar: **Home**, **Scenes**, **Performers**, **Search**, and **Library**.
-3. Pick a highlight color under **Settings**, and lay out Home with the layout button at the top of Home.
+3. Pick a highlight color under **Settings → Appearance**, and lay out Home with the layout button at the top of Home.
+4. To keep a list for offline, tap the save-for-offline button at the end of its sort and filter chips.
 
 ---
 
@@ -130,7 +133,8 @@ before each update. Keep `pocketstash.jks` backed up; `.gitignore` already exclu
 | **Network** | OkHttp and kotlinx.serialization, with hand-written GraphQL documents ([`Queries.kt`](app/src/main/java/com/frameender/pocketstash/data/Queries.kt), [`Edit.kt`](app/src/main/java/com/frameender/pocketstash/data/Edit.kt)) validated against Stash's own schema. |
 | **Media** | Coil 3 for images, Media3 ExoPlayer (HLS and DASH) for video, sharing one authenticated OkHttp client. |
 | **Editing** | One form engine renders every entity from a field list that mirrors Stash's `*UpdateInput` types. |
-| **State** | A small app container plus a ViewModel per screen. Settings and the Home layout live in DataStore. Update checks run in WorkManager. |
+| **State** | A small app container plus a ViewModel per screen. Settings and the Home layout live in DataStore. Update checks and offline refreshes run in WorkManager. |
+| **Offline** | Stash's GraphQL runs over POST, which HTTP caches never store, so read queries are saved by the app itself ([`ResponseCache.kt`](app/src/main/java/com/frameender/pocketstash/data/ResponseCache.kt)) and served when the server is down. Pictures come from Coil's disk cache. |
 
 ```
 app/src/main/java/com/frameender/pocketstash/
@@ -151,13 +155,17 @@ The app updates itself from this repo's GitHub Releases (**Settings → Updates*
 
 | Channel | Comes from | Made by |
 |---|---|---|
-| **Stable** | the latest release | pushing a tag: `git tag v0.2.0 && git push origin v0.2.0` |
+| **Stable** | the latest release; its notes list every commit since the previous `v*` tag | pushing a tag: `git tag v0.2.0 && git push origin v0.2.0` |
 | **Nightly** | the rolling `nightly` pre-release | every push to `main` (the workflow replaces it automatically) |
 
 Each build's APK is named `PocketStash-<build>.apk`, where the build number is the Actions run number
 and also the app's `versionCode`. The app offers an update when a release's APK has a higher number
 than the installed one. Updates only install over each other when every build is signed with the same
 key (see the signing secrets above).
+
+With **Check for updates automatically** and **Notify me about new builds** both on, a new build also pops up
+in the app. **Later** hides it until the app next opens; **Skip this build** hides it for good (a newer build
+still shows, and **Updates → Show again** undoes it).
 
 While the repo is **private**, GitHub won't serve releases anonymously. Either make the repo public or
 paste a fine-grained token (read-only **Contents** access to this repo) under **Updates → Source**.
@@ -174,6 +182,7 @@ paste a fine-grained token (read-only **Contents** access to this repo) under **
 | A video won't play | The app already falls back through Stash's transcodes. If none work, pick another stream from the player's quality button, or check that ffmpeg works in Stash. |
 | Videos have no sound | Tap the speaker button in the player, or swipe up on the right side. |
 | Saving a performer fails | Update Stash; older versions don't know the `career_start` / `career_end` fields. |
+| "…hasn't been saved for offline" | The server is unreachable and that screen was never opened or saved. Save the list for offline next time you're connected. Videos always need the server. |
 | "No release found" in Updates | The repo is private. Add a GitHub token under **Updates → Source**, or make the repo public. |
 | A new APK won't install over the old one | The builds were signed with different keys. Set up the signing secrets, then uninstall once. |
 

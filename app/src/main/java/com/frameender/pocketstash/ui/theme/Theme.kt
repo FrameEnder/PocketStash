@@ -70,6 +70,11 @@ object Ink {
     val Muted = Color(0xFF9A958C)
     val Red = Color(0xFFE5534B)
     val Green = Color(0xFF5BBF7A)
+    val Teal = Color(0xFF7DB8B5)
+    val Violet = Color(0xFFB394E8)
+    val Blue = Color(0xFF6FA8F0)
+    val Gold = Color(0xFFE6C15A)
+    val Surface3 = Color(0xFF282C35)
 
     // The accent. Name kept as "Amber" so every screen follows the picker.
     val Amber: Color get() = Accents.current.main

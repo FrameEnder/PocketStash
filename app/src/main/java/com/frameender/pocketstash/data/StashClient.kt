@@ -1,6 +1,8 @@
 package com.frameender.pocketstash.data
 
+import android.os.SystemClock
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -40,8 +42,11 @@ class Connection {
     @Volatile
     var settings: AppSettings = AppSettings()
 
+    /** True while the server can't be reached and screens are showing saved copies. */
+    val offline = MutableStateFlow(false)
+
     val http: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .addInterceptor(Interceptor { chain ->
             val req = chain.request()
@@ -71,8 +76,11 @@ class Connection {
     }
 }
 
-class StashClient(private val connection: Connection) {
+class StashClient(private val connection: Connection, private val cache: ResponseCache? = null) {
     private val jsonType = "application/json; charset=utf-8".toMediaType()
+
+    /** When the server last failed to answer (elapsed-realtime ms); 0 = it's been fine. */
+    @Volatile private var lastFailureAt = 0L
 
     suspend fun execute(
         query: String,
@@ -94,10 +102,43 @@ class StashClient(private val connection: Connection) {
         // may target a different host, so set the header explicitly.
         if (apiKey.isNotEmpty()) builder.header("ApiKey", apiKey)
 
+        // Only plain reads against the configured server are saved / served offline.
+        val isRead = override == null && query.trimStart().startsWith("query")
+        val cacheKey = if (isRead && cache != null) cache.key(base.toString(), apiKey, query, variables.toString()) else null
+        val offlineOk = cacheKey != null && connection.settings.offlineFallback
+
+        // The server just failed: use saved copies right away instead of waiting out another
+        // connection timeout per request. The network is tried again every 30 seconds.
+        val now = SystemClock.elapsedRealtime()
+        val recentlyDown = lastFailureAt != 0L && now - lastFailureAt < 30_000
+        if (offlineOk && recentlyDown) {
+            cache!!.get(cacheKey!!)?.let { saved ->
+                connection.offline.value = true
+                return@withContext parse(saved, 200)
+            }
+        }
+
         val response = try {
             connection.http.newCall(builder.build()).execute()
         } catch (e: IOException) {
+            if (override == null) lastFailureAt = SystemClock.elapsedRealtime()
+            // Server unreachable: fall back to the last saved copy of this exact request.
+            if (offlineOk) {
+                cache!!.get(cacheKey!!)?.let { saved ->
+                    connection.offline.value = true
+                    return@withContext parse(saved, 200)
+                }
+                throw StashException(
+                    "Can't reach ${base.host}:${base.port}, and this page hasn't been saved for offline " +
+                        "(${e.message ?: e.javaClass.simpleName})",
+                    e,
+                )
+            }
             throw StashException("Can't reach ${base.host}:${base.port} — ${e.message ?: e.javaClass.simpleName}", e)
+        }
+        if (override == null) {
+            lastFailureAt = 0L
+            connection.offline.value = false
         }
 
         response.use { r ->
@@ -108,21 +149,28 @@ class StashClient(private val connection: Connection) {
                 !r.isSuccessful && text.isBlank() ->
                     throw StashException("HTTP ${r.code} from Stash")
             }
-            val root: JsonObject = try {
-                StashJson.parseToJsonElement(text).jsonObject
-            } catch (e: Exception) {
-                throw StashException("Stash returned something that isn't JSON (HTTP ${r.code}). Is the URL right?", e)
-            }
-            val errors = root["errors"] as? JsonArray
-            val data = root["data"]
-            if (!errors.isNullOrEmpty() && (data == null || data is JsonNull)) {
-                val msg = errors.joinToString("\n") {
-                    (it as? JsonObject)?.get("message")?.jsonPrimitive?.contentOrNull ?: it.toString()
-                }
-                throw StashException(msg)
-            }
-            (data as? JsonObject) ?: throw StashException("Empty response from Stash")
+            val data = parse(text, r.code)
+            // Saved only once Stash answered without errors.
+            if (cacheKey != null && r.isSuccessful) cache!!.put(cacheKey, text)
+            data
         }
+    }
+
+    private fun parse(text: String, code: Int): JsonObject {
+        val root: JsonObject = try {
+            StashJson.parseToJsonElement(text).jsonObject
+        } catch (e: Exception) {
+            throw StashException("Stash returned something that isn't JSON (HTTP $code). Is the URL right?", e)
+        }
+        val errors = root["errors"] as? JsonArray
+        val data = root["data"]
+        if (!errors.isNullOrEmpty() && (data == null || data is JsonNull)) {
+            val msg = errors.joinToString("\n") {
+                (it as? JsonObject)?.get("message")?.jsonPrimitive?.contentOrNull ?: it.toString()
+            }
+            throw StashException(msg)
+        }
+        return (data as? JsonObject) ?: throw StashException("Empty response from Stash")
     }
 }
 

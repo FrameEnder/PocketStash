@@ -60,6 +60,7 @@ fun PerformerDetailScreen(id: String) {
         LoadSwitch(state, vm::reload) { perf ->
             TabbedRelated(
                 Scope.Performer(id),
+                ownerName = perf.name,
                 listOf(
                     TabSpec(EntityKind.SCENES, perf.sceneCount),
                     TabSpec(EntityKind.GALLERIES, perf.galleryCount),
@@ -141,6 +142,7 @@ fun StudioDetailScreen(id: String) {
         LoadSwitch(state, vm::reload) { s: Studio ->
             TabbedRelated(
                 Scope.Studio(id),
+                ownerName = s.name,
                 listOf(
                     TabSpec(EntityKind.SCENES, s.sceneCount),
                     TabSpec(EntityKind.GALLERIES, s.galleryCount),
@@ -215,6 +217,7 @@ fun TagDetailScreen(id: String) {
         LoadSwitch(state, vm::reload) { t: Tag ->
             TabbedRelated(
                 Scope.Tag(id),
+                ownerName = t.name,
                 listOf(
                     TabSpec(EntityKind.SCENES, t.sceneCount),
                     TabSpec(EntityKind.MARKERS, t.markerCount),
@@ -272,7 +275,7 @@ fun GroupDetailScreen(id: String) {
 
     DetailScaffold(title = gr?.name ?: "Group", onEdit = { nav.edit(EditKind.GROUP, id) }) {
         LoadSwitch(state, vm::reload) { g: Group ->
-            TabbedRelated(Scope.Group(id), listOf(TabSpec(EntityKind.SCENES, g.sceneCount))) {
+            TabbedRelated(Scope.Group(id), listOf(TabSpec(EntityKind.SCENES, g.sceneCount)), ownerName = g.name) {
                 item(span = headerSpan, key = "header") {
                     ProfileHeader(
                         image = container.connection.media(g.frontImagePath),
@@ -328,7 +331,7 @@ fun GalleryDetailScreen(id: String) {
 
     DetailScaffold(title = ga?.displayTitle ?: "Gallery", onEdit = { nav.edit(EditKind.GALLERY, id) }) {
         LoadSwitch(state, vm::reload) { g: Gallery ->
-            TabbedRelated(Scope.Gallery(id), listOf(TabSpec(EntityKind.IMAGES, g.imageCount))) {
+            TabbedRelated(Scope.Gallery(id), listOf(TabSpec(EntityKind.IMAGES, g.imageCount)), ownerName = g.displayTitle) {
                 item(span = headerSpan, key = "header") {
                     ProfileHeader(
                         image = container.connection.media(g.paths.cover),

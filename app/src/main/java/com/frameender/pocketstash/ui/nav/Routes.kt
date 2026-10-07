@@ -13,6 +13,9 @@ import kotlinx.serialization.Serializable
 @Serializable object UpdatesRoute
 @Serializable object HomeLayoutRoute
 
+/** One Settings topic page (settings/<key>), see SettingsSection. */
+@Serializable data class SettingsSectionRoute(val key: String)
+
 /** Edit form for any entity; [id] null = create. [sceneId]/[seconds] pre-fill a new marker. */
 @Serializable
 data class EditRoute(

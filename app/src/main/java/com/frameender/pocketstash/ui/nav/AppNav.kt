@@ -52,6 +52,33 @@ import com.frameender.pocketstash.ui.images.ImageViewerScreen
 import com.frameender.pocketstash.ui.library.LibraryScreen
 import com.frameender.pocketstash.ui.search.SearchScreen
 import com.frameender.pocketstash.ui.settings.SettingsScreen
+import com.frameender.pocketstash.ui.settings.SettingsSectionScreen
+import com.frameender.pocketstash.ui.settings.UpdatePopup
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.launch
 import com.frameender.pocketstash.ui.settings.SetupScreen
 import com.frameender.pocketstash.ui.theme.Ink
 import com.frameender.pocketstash.container
@@ -102,6 +129,23 @@ fun AppNav(configured: Boolean) {
     }
 
     val showBar = tabs.any { t -> destination?.hierarchy?.any(t.matches) == true }
+    val onUpdates = destination?.hasRoute<UpdatesRoute>() == true
+    val onSetup = destination?.hasRoute<SetupRoute>() == true
+    val offlineSave by container.offlineSaver.progress.collectAsState()
+    val offline by container.connection.offline.collectAsState()
+
+    // Coming back to the app re-checks for updates if the last check is over 30 minutes old.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val scope = rememberCoroutineScope()
+    DisposableEffect(lifecycle) {
+        val obs = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_START && container.settings.value?.autoUpdateCheck == true) {
+                scope.launch { container.updater.checkIfStale(30 * 60 * 1000L) }
+            }
+        }
+        lifecycle.addObserver(obs)
+        onDispose { lifecycle.removeObserver(obs) }
+    }
 
     CompositionLocalProvider(LocalNavigator provides navigator) {
         Scaffold(
@@ -137,10 +181,11 @@ fun AppNav(configured: Boolean) {
                 }
             },
         ) { pad ->
+          Box(Modifier.padding(pad).consumeWindowInsets(pad).fillMaxSize()) {
             NavHost(
                 navController = navController,
                 startDestination = if (configured) HomeRoute else SetupRoute,
-                modifier = Modifier.padding(pad).consumeWindowInsets(pad).fillMaxSize(),
+                modifier = Modifier.fillMaxSize(),
             ) {
                 composable<SetupRoute> {
                     SetupScreen(onDone = {
@@ -152,10 +197,12 @@ fun AppNav(configured: Boolean) {
                 composable<PerformersTab> { BrowseScreen(EntityKind.PERFORMERS, vmKey = "tab:performers") }
                 composable<SearchRoute> { SearchScreen() }
                 composable<LibraryRoute> { LibraryScreen() }
-                composable<SettingsRoute> {
-                    SettingsScreen(onDisconnected = {
-                        navController.navigate(SetupRoute) { popUpTo(0) { inclusive = true } }
-                    })
+                composable<SettingsRoute> { SettingsScreen() }
+                composable<SettingsSectionRoute> {
+                    SettingsSectionScreen(
+                        it.toRoute<SettingsSectionRoute>().key,
+                        onDisconnected = { navController.navigate(SetupRoute) { popUpTo(0) { inclusive = true } } },
+                    )
                 }
                 composable<BrowseRoute> { entry ->
                     val r = entry.toRoute<BrowseRoute>()
@@ -196,6 +243,47 @@ fun AppNav(configured: Boolean) {
                     )
                 }
             }
+
+            // Saving a list for offline: progress along the bottom.
+            offlineSave?.let { p ->
+                Column(Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(bottom = 4.dp)) {
+                    Text(
+                        "Saving “${p.label}” for offline" + if (p.total > 0) " ${p.done}/${p.total}" else "",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Ink.Teal,
+                        maxLines = 1,
+                        modifier = Modifier.align(Alignment.CenterHorizontally).padding(horizontal = 16.dp),
+                    )
+                    if (p.total == 0) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = Ink.Teal, trackColor = Ink.Raised)
+                    } else {
+                        LinearProgressIndicator(
+                            progress = { p.done.toFloat() / p.total },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = Ink.Teal, trackColor = Ink.Raised,
+                        )
+                    }
+                }
+            }
+
+            // Showing saved copies because the server can't be reached.
+            AnimatedVisibility(
+                visible = offline && offlineSave == null,
+                enter = fadeIn(), exit = fadeOut(),
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+            ) {
+                Surface(shape = RoundedCornerShape(50), color = Ink.Surface3, border = BorderStroke(1.dp, Ink.Line)) {
+                    Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.CloudOff, null, tint = Ink.Muted, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Offline · showing saved copies", style = MaterialTheme.typography.labelMedium, color = Ink.Text)
+                    }
+                }
+            }
+          }
         }
+
+        // New-build pop-up (only with automatic checks and update notifications both on).
+        UpdatePopup(suppressed = onUpdates || onSetup || !configured, onDetails = { navigator.updates() })
     }
 }
