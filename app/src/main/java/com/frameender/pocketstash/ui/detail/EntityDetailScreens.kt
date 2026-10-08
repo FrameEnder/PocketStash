@@ -61,7 +61,7 @@ fun PerformerDetailScreen(id: String) {
             TabbedRelated(
                 Scope.Performer(id),
                 ownerName = perf.name,
-                listOf(
+                tabs = listOf(
                     TabSpec(EntityKind.SCENES, perf.sceneCount),
                     TabSpec(EntityKind.GALLERIES, perf.galleryCount),
                     TabSpec(EntityKind.IMAGES, perf.imageCount),
@@ -143,7 +143,7 @@ fun StudioDetailScreen(id: String) {
             TabbedRelated(
                 Scope.Studio(id),
                 ownerName = s.name,
-                listOf(
+                tabs = listOf(
                     TabSpec(EntityKind.SCENES, s.sceneCount),
                     TabSpec(EntityKind.GALLERIES, s.galleryCount),
                     TabSpec(EntityKind.IMAGES, s.imageCount),
@@ -218,7 +218,7 @@ fun TagDetailScreen(id: String) {
             TabbedRelated(
                 Scope.Tag(id),
                 ownerName = t.name,
-                listOf(
+                tabs = listOf(
                     TabSpec(EntityKind.SCENES, t.sceneCount),
                     TabSpec(EntityKind.MARKERS, t.markerCount),
                     TabSpec(EntityKind.PERFORMERS, t.performerCount),
