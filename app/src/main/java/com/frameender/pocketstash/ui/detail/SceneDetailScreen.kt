@@ -1,6 +1,24 @@
 package com.frameender.pocketstash.ui.detail
 
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DownloadDone
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DownloadForOffline
+import androidx.compose.material.icons.outlined.Downloading
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.frameender.pocketstash.data.SceneDownload
+import com.frameender.pocketstash.ui.downloads.DownloadDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -78,7 +96,7 @@ import com.frameender.pocketstash.data.EntityKind
 fun SceneDetailScreen(id: String) {
     val container = LocalContext.current.container
     val repo = container.repository
-    val vm = appViewModel("scene:$id") { c -> DetailViewModel { c.repository.scene(id) } }
+    val vm = appViewModel("scene:$id") { c -> DetailViewModel(c.repository.modeChanges) { c.repository.scene(id) } }
     val state by vm.state.collectAsState()
     MutationToasts(vm)
     // Pick up the new resume point / play count after returning from the player.
@@ -111,7 +129,13 @@ private fun SceneBody(
     onOrganized: (Boolean) -> Unit,
 ) {
     val nav = LocalNavigator.current
-    val conn = LocalContext.current.container.connection
+    val container = LocalContext.current.container
+    val conn = container.connection
+    val offline by conn.offline.collectAsState()
+    val downloadItems by container.downloads.items.collectAsState()
+    val download = downloadItems.firstOrNull { it.sceneId == s.id }
+    // Offline, only a downloaded scene can play.
+    val playable = !offline || download?.done == true
     val file = s.files.firstOrNull()
     val resume = s.resumeTime?.takeIf { it > 5 && (s.duration == null || it < s.duration!! - 10) }
 
@@ -123,7 +147,7 @@ private fun SceneBody(
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f)
                     .background(LetterboxBg)
-                    .clickable { nav.play(s.id, resume) },
+                    .clickable(enabled = playable) { nav.play(s.id, resume) },
             ) {
                 AsyncImage(
                     model = conn.media(s.paths.screenshot), contentDescription = null,
@@ -131,15 +155,23 @@ private fun SceneBody(
                     contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize(),
                 )
                 Box(Modifier.fillMaxSize().background(ScrimBrush))
-                Box(
-                    Modifier
-                        .align(Alignment.Center)
-                        .size(72.dp)
-                        .clip(CircleShape)
-                        .background(Ink.Amber),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Filled.PlayArrow, "Play", tint = Ink.OnAmber, modifier = Modifier.size(44.dp))
+                if (playable) {
+                    Box(
+                        Modifier
+                            .align(Alignment.Center)
+                            .size(72.dp)
+                            .clip(CircleShape)
+                            .background(Ink.Amber),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Filled.PlayArrow, "Play", tint = Ink.OnAmber, modifier = Modifier.size(44.dp))
+                    }
+                } else {
+                    Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Outlined.CloudOff, null, tint = Color.White, modifier = Modifier.size(36.dp))
+                        Spacer(Modifier.height(6.dp))
+                        Pill("Not downloaded · info only")
+                    }
                 }
                 Row(
                     Modifier.align(Alignment.BottomStart).padding(12.dp),
@@ -149,7 +181,7 @@ private fun SceneBody(
                     s.duration?.let { Pill(formatDuration(it)) }
                     resume?.let { Pill("Resume ${formatDuration(it)}", accent = true) }
                 }
-                if (resume != null) {
+                if (resume != null && playable) {
                     IconButton(
                         onClick = { nav.play(s.id, 0.0) },
                         modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp),
@@ -224,6 +256,11 @@ private fun SceneBody(
             }
         }
 
+        // ---------------------------------------------------------------- download
+        item(key = "download") {
+            DownloadRow(s, download, offline)
+        }
+
         // ---------------------------------------------------------------- performers
         if (s.performers.isNotEmpty()) {
             item(key = "performers") {
@@ -260,9 +297,15 @@ private fun SceneBody(
         }
 
         // ---------------------------------------------------------------- markers
-        item(key = "markers-h") {
-            SectionHeader("Markers", s.markers.size.takeIf { it > 0 }, "+ Add") {
-                nav.newMarker(s.id, s.displayTitle, null)
+        if (!offline || s.markers.isNotEmpty()) {
+            item(key = "markers-h") {
+                if (offline) {
+                    SectionHeader("Markers", s.markers.size)
+                } else {
+                    SectionHeader("Markers", s.markers.size.takeIf { it > 0 }, "+ Add") {
+                        nav.newMarker(s.id, s.displayTitle, null)
+                    }
+                }
             }
         }
         if (s.markers.isNotEmpty()) {
@@ -270,7 +313,7 @@ private fun SceneBody(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .clickable { nav.play(s.id, m.seconds) }
+                        .clickable(enabled = playable) { nav.play(s.id, m.seconds) }
                         .padding(horizontal = 16.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -294,8 +337,12 @@ private fun SceneBody(
                         formatDuration(m.seconds) + (m.endSeconds?.let { "–" + formatDuration(it) } ?: ""),
                         style = MaterialTheme.typography.labelMedium, color = Ink.Amber,
                     )
-                    IconButton(onClick = { nav.edit(EditKind.MARKER, m.id) }) {
-                        Icon(Icons.Outlined.Edit, "Edit marker", tint = Ink.Muted, modifier = Modifier.size(20.dp))
+                    if (!offline) {
+                        IconButton(onClick = { nav.edit(EditKind.MARKER, m.id) }) {
+                            Icon(Icons.Outlined.Edit, "Edit marker", tint = Ink.Muted, modifier = Modifier.size(20.dp))
+                        }
+                    } else {
+                        Spacer(Modifier.width(12.dp))
                     }
                 }
             }
@@ -366,4 +413,97 @@ private fun SectionHeaderInline(title: String) {
         color = Ink.Amber,
         modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
     )
+}
+
+/**
+ * Download state for this scene: a Download button, live progress with Cancel, the finished
+ * file with Delete, or the error with Retry.
+ */
+@Composable
+private fun DownloadRow(s: Scene, d: SceneDownload?, offline: Boolean) {
+    val context = LocalContext.current
+    val downloads = context.container.downloads
+    val nav = LocalNavigator.current
+    var pick by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Ink.Surface,
+        border = BorderStroke(1.dp, Ink.Line),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+    ) {
+        Row(Modifier.padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            val icon = when {
+                d == null -> Icons.Outlined.DownloadForOffline
+                d.done -> Icons.Filled.DownloadDone
+                d.status == SceneDownload.FAILED -> Icons.Outlined.ErrorOutline
+                else -> Icons.Outlined.Downloading
+            }
+            Icon(
+                icon, null,
+                tint = when {
+                    d?.done == true -> Ink.Green
+                    d?.status == SceneDownload.FAILED -> Ink.Red
+                    else -> Ink.Amber
+                },
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f).clickable(enabled = d != null) { nav.downloads() }) {
+                val (title, sub) = when {
+                    d == null && offline -> "Not downloaded" to "Go online to download this scene"
+                    d == null -> "Download" to "Keep it on this phone for offline playback"
+                    d.done -> "Downloaded" to listOf(d.qualityLabel, downloads.localFile(s.id)?.length()?.let { formatBytes(it.toDouble()) })
+                        .filterNotNull().joinToString(" · ")
+                    d.status == SceneDownload.FAILED -> "Download failed" to (d.error ?: "Tap retry to try again")
+                    d.status == SceneDownload.RUNNING -> "Downloading" to buildString {
+                        append(d.qualityLabel).append(" · ").append(formatBytes(d.bytes.toDouble()))
+                        if (d.total > 0) append(" of ").append(formatBytes(d.total.toDouble()))
+                    }
+                    else -> "Queued" to "${d.qualityLabel} · waiting to start"
+                }
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(sub, style = MaterialTheme.typography.bodySmall, color = Ink.Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (d != null && (d.status == SceneDownload.RUNNING || d.status == SceneDownload.QUEUED)) {
+                    Spacer(Modifier.height(6.dp))
+                    val p = d.progress
+                    if (d.status == SceneDownload.RUNNING && p != null) {
+                        LinearProgressIndicator(progress = { p }, color = Ink.Amber, trackColor = Ink.Line, modifier = Modifier.fillMaxWidth())
+                    } else {
+                        LinearProgressIndicator(color = Ink.Muted, trackColor = Ink.Line, modifier = Modifier.fillMaxWidth())
+                    }
+                }
+            }
+            when {
+                d == null -> if (!offline) {
+                    TextButton(onClick = { pick = true }) { Text("Download", color = Ink.Amber) }
+                }
+                d.done -> IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Outlined.Delete, "Delete download", tint = Ink.Muted) }
+                d.status == SceneDownload.FAILED -> Row {
+                    if (!offline) IconButton(onClick = { downloads.retry(s.id) }) { Icon(Icons.Filled.Refresh, "Retry", tint = Ink.Amber) }
+                    IconButton(onClick = { downloads.delete(s.id) }) { Icon(Icons.Filled.Close, "Remove", tint = Ink.Muted) }
+                }
+                else -> IconButton(onClick = { downloads.delete(s.id) }) { Icon(Icons.Filled.Close, "Cancel download", tint = Ink.Muted) }
+            }
+        }
+    }
+
+    if (pick) DownloadDialog(s) { pick = false }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete download?") },
+            text = {
+                Text(
+                    if (offline) "You're offline, so this scene won't be playable until you're back online."
+                    else "The video will be removed from this phone. It stays on your Stash server.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { downloads.delete(s.id); confirmDelete = false }) { Text("Delete", color = Ink.Red) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+            containerColor = Ink.Raised,
+        )
+    }
 }

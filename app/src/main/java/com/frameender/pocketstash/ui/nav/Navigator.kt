@@ -37,6 +37,7 @@ class Navigator(private val nav: NavController, private val context: Context) {
     fun settings() = nav.navigate(SettingsRoute)
     fun updates() = nav.navigate(UpdatesRoute) { launchSingleTop = true }
     fun homeLayout() = nav.navigate(HomeLayoutRoute)
+    fun downloads() = nav.navigate(DownloadsRoute) { launchSingleTop = true }
     fun settingsSection(key: String) = nav.navigate(SettingsSectionRoute(key))
 
     fun edit(kind: EditKind, id: String) = nav.navigate(EditRoute(kind.name, id))

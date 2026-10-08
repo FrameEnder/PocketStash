@@ -13,7 +13,8 @@ import com.frameender.pocketstash.data.AppSettings
 import com.frameender.pocketstash.data.Connection
 import com.frameender.pocketstash.data.OfflineRefreshScheduler
 import com.frameender.pocketstash.data.OfflineSaver
-import com.frameender.pocketstash.data.ResponseCache
+import com.frameender.pocketstash.data.OfflineLibrary
+import com.frameender.pocketstash.data.SceneDownloads
 import com.frameender.pocketstash.player.PlayerPrefs
 import com.frameender.pocketstash.data.SettingsStore
 import com.frameender.pocketstash.data.StashClient
@@ -27,7 +28,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -40,10 +44,10 @@ class AppContainer(context: Context) {
     val settingsStore = SettingsStore(context)
     val connection = Connection()
 
-    /** Saved GraphQL answers (see ResponseCache); serves screens when the server is unreachable. */
-    val responseCache = ResponseCache(context.cacheDir.resolve("graphql"))
-    val client = StashClient(connection, responseCache)
-    val repository = StashRepository(client, connection)
+    /** The phone's own copy of the library: the whole database in offline mode. */
+    val library = OfflineLibrary(context, appScope)
+    val client = StashClient(connection)
+    val repository = StashRepository(client, connection, library)
 
     /** null until DataStore has been read once. */
     val settings: StateFlow<AppSettings?> = settingsStore.settings
@@ -56,16 +60,60 @@ class AppContainer(context: Context) {
 
     val updater = Updater(context, connection.http) { settings.value ?: AppSettings() }
 
+    /** Scenes downloaded for offline playback. */
+    val downloads = SceneDownloads(context, connection, repository, library, appScope)
+
     val offlineSaver = OfflineSaver(
-        context, repository, appScope,
+        context, repository, library, { downloads }, appScope,
         settings = { settings.filterNotNull().first() },
         update = { t -> settingsStore.update(t) },
     )
+
+    /** Switches offline mode on by hand: the app uses only what's on the phone until [goOnline]. */
+    fun goOffline() = connection.enterOffline(manual = true)
+
+    /** Leaves offline mode; screens reload from the server, and plays made offline are sent. */
+    fun goOnline() {
+        connection.leaveOffline()
+        appScope.launch { runCatching { repository.flushPending() } }
+    }
 
     /** Screen to open from outside the UI (e.g. tapping the update notification). */
     val pendingRoute = MutableStateFlow<String?>(null)
 
     init {
+        repository.downloads = downloads
+        connection.localMedia = { raw -> library.localImage(raw) }
+
+        // While in offline mode, check every 20 seconds whether the server is back.
+        appScope.launch {
+            connection.offline.collectLatest { offline ->
+                if (!offline) return@collectLatest
+                while (true) {
+                    delay(20_000)
+                    val reachable = client.ping()
+                    connection.serverBack.value = reachable
+                    // Nothing on the phone to lose: go straight back online.
+                    if (reachable && !connection.manualOffline && library.isEmpty()) {
+                        goOnline()
+                        break
+                    }
+                }
+            }
+        }
+        // Send plays made offline last time, and pick up downloads that were interrupted.
+        appScope.launch {
+            settings.filterNotNull().first()
+            runCatching { repository.flushPending() }
+            downloads.start()
+        }
+        // Changing "Wi-Fi only" re-plans waiting downloads.
+        appScope.launch {
+            settings.filterNotNull().map { it.downloadWifiOnly }.distinctUntilChanged().drop(1).collect {
+                downloads.start()
+            }
+        }
+
         // Keep the background update check in step with the setting, and check once per launch.
         appScope.launch {
             settings.filterNotNull().map { it.autoUpdateCheck }.distinctUntilChanged().collect { enabled ->

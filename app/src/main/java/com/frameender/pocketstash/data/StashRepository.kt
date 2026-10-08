@@ -22,11 +22,45 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.HttpUrl
 
+/**
+ * Every screen's way to Stash. Online it asks the server; in offline mode it answers from the
+ * phone ([OfflineLibrary] + [OfflineQuery]) with the same shapes, so screens don't need to care.
+ * If the server stops answering, the app switches to offline mode for the rest of the session
+ * (when Settings allows it) and the request that noticed is answered from the phone instead.
+ */
 class StashRepository(
     private val client: StashClient,
     private val connection: Connection,
+    private val library: OfflineLibrary,
 ) {
     private fun vars(block: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) = buildJsonObject(block)
+
+    /** Set by the app container once downloads exist (they need the repository too). */
+    lateinit var downloads: SceneDownloads
+
+    val isOffline: Boolean get() = connection.offline.value
+
+    /** Emits when offline mode turns on or off; screens reload on it. */
+    val modeChanges get() = connection.modeChanges
+
+    private fun downloadedIds(): Set<String> = if (::downloads.isInitialized) downloads.doneIds else emptySet()
+
+    private fun snapshot() = library.snapshot(downloadedIds())
+
+    /** Online read with an offline twin. Switches to offline mode if the server has vanished. */
+    private suspend fun <T> read(online: suspend () -> T, offline: () -> T): T {
+        if (connection.offline.value) return offline()
+        return try {
+            online()
+        } catch (e: ServerUnreachableException) {
+            if (!connection.settings.offlineFallback) throw e
+            connection.enterOffline(manual = false)
+            offline()
+        }
+    }
+
+    private fun notOffline(kind: String): Nothing =
+        throw StashException("This $kind isn't on your phone. Download it or save its list for offline while you're connected.")
 
     // ------------------------------------------------------------------ system
 
@@ -39,6 +73,7 @@ class StashRepository(
     }
 
     suspend fun serverInfo(): ServerInfo {
+        if (connection.offline.value) return ServerInfo(version = null, status = "OFFLINE")
         val data = client.execute(Q.serverInfo)
         return ServerInfo(
             version = data.optObj("version")?.get("version")?.jsonPrimitive?.contentOrNull,
@@ -46,11 +81,30 @@ class StashRepository(
         )
     }
 
-    suspend fun stats(): Stats = client.execute(Q.stats).obj("stats").decode()
+    suspend fun stats(): Stats = read(
+        online = { client.execute(Q.stats).obj("stats").decode<Stats>() },
+        offline = { OfflineQuery.stats(snapshot()).decode<Stats>() },
+    )
 
     // ------------------------------------------------------------------ browse
 
-    suspend fun browse(kind: EntityKind, scope: Scope, q: BrowseQuery, page: Int, perPage: Int = 40): Page<CardItem> {
+    suspend fun browse(kind: EntityKind, scope: Scope, q: BrowseQuery, page: Int, perPage: Int = 40): Page<CardItem> = read(
+        online = {
+            val raw = browseRaw(kind, scope, q, page, perPage)
+            Page(raw.items.map { toCard(kind, it) }, raw.total)
+        },
+        offline = {
+            val (items, total) = OfflineQuery.browse(kind, scope, q, page, perPage, snapshot())
+            Page(items.map { toCard(kind, it) }, total)
+        },
+    )
+
+    /** One page straight from the server, as raw JSON (online only). */
+    suspend fun browseRaw(kind: EntityKind, scope: Scope, q: BrowseQuery, page: Int, perPage: Int = 40): Page<JsonObject> {
+        // "Downloaded" isn't a Stash filter: ask for exactly the downloaded scenes instead.
+        val onlyIds: List<String>? = if (kind == EntityKind.SCENES && "downloaded" in q.quick) {
+            downloadedIds().toList().ifEmpty { return Page(emptyList(), 0) }
+        } else null
         val query = when (kind) {
             EntityKind.SCENES -> Q.findScenes
             EntityKind.PERFORMERS -> Q.findPerformers
@@ -64,12 +118,16 @@ class StashRepository(
         val variables = vars {
             put("filter", BrowseSpec.findFilter(q, page, perPage))
             put("f", BrowseSpec.entityFilter(kind, scope, q))
+            if (onlyIds != null) put("ids", kotlinx.serialization.json.JsonArray(onlyIds.map { kotlinx.serialization.json.JsonPrimitive(it) }))
         }
         val result = client.execute(query, variables).obj("result")
         val total = result["count"]?.jsonPrimitive?.intOrNull ?: 0
-        val items = (result["items"] as? JsonArray).orEmpty()
-        return Page(items.map { toCard(kind, it) }, total)
+        val items = (result["items"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+        return Page(items, total)
     }
+
+    /** The card the app would show for this raw entity JSON. */
+    fun cardFor(kind: EntityKind, el: JsonElement): CardItem = toCard(kind, el)
 
     private fun toCard(kind: EntityKind, el: JsonElement): CardItem = when (kind) {
         EntityKind.SCENES -> sceneCard(el.decode())
@@ -130,6 +188,7 @@ class StashRepository(
     }
 
     fun sceneCard(s: Scene): CardItem {
+        val downloaded = isDownloaded(s)
         val dur = s.duration
         val res = s.files.firstOrNull()?.height?.let { resolutionLabel(it) }
         val progress = if (dur != null && dur > 0 && (s.resumeTime ?: 0.0) > 0) (s.resumeTime!! / dur).toFloat().coerceIn(0f, 1f) else null
@@ -141,6 +200,8 @@ class StashRepository(
             badge = listOfNotNull(res, dur?.let { formatDuration(it) }).joinToString(" · ").ifBlank { null },
             rating100 = s.rating100, progress = progress,
             preview = connection.media(s.paths.preview),
+            downloaded = downloaded,
+            infoOnly = connection.offline.value && !downloaded,
         )
     }
 
@@ -153,23 +214,48 @@ class StashRepository(
         badge = formatDuration(m.seconds),
         preview = connection.media(m.preview),
         sceneId = m.scene?.id ?: sceneId, seconds = m.seconds,
+        infoOnly = connection.offline.value && (m.scene?.id ?: sceneId) !in downloadedIds(),
     )
+
+    /** Downloaded, and (online) really the same video, not another server's scene with that id. */
+    fun isDownloaded(s: Scene): Boolean {
+        if (!::downloads.isInitialized) return false
+        return downloads.isDownloaded(s.id, if (connection.offline.value || s.files.isEmpty()) null else sceneFileKey(s))
+    }
 
     // ------------------------------------------------------------------ details
 
-    suspend fun scene(id: String): Scene = detail(Q.scene, "findScene", id)
-    suspend fun performer(id: String): Performer = detail(Q.performer, "findPerformer", id)
-    suspend fun studio(id: String): Studio = detail(Q.studio, "findStudio", id)
-    suspend fun tag(id: String): Tag = detail(Q.tag, "findTag", id)
-    suspend fun gallery(id: String): Gallery = detail(Q.gallery, "findGallery", id)
-    suspend fun image(id: String): StashImage = detail(Q.image, "findImage", id)
-    suspend fun group(id: String): Group = detail(Q.group, "findGroup", id)
+    suspend fun scene(id: String): Scene = detail(EntityKind.SCENES, id, "scene")
+    suspend fun performer(id: String): Performer = detail(EntityKind.PERFORMERS, id, "performer")
+    suspend fun studio(id: String): Studio = detail(EntityKind.STUDIOS, id, "studio")
+    suspend fun tag(id: String): Tag = detail(EntityKind.TAGS, id, "tag")
+    suspend fun gallery(id: String): Gallery = detail(EntityKind.GALLERIES, id, "gallery")
+    suspend fun image(id: String): StashImage = detail(EntityKind.IMAGES, id, "image")
+    suspend fun group(id: String): Group = detail(EntityKind.GROUPS, id, "group")
 
-    private suspend inline fun <reified T> detail(query: String, field: String, id: String): T {
-        val data = client.execute(query, vars { put("id", id) })
-        val node = data[field]
+    private suspend inline fun <reified T> detail(kind: EntityKind, id: String, noun: String): T {
+        val json = read(
+            online = { rawDetail(kind, id).also { library.refreshIfStored(kind, it) } },
+            offline = { OfflineQuery.get(kind, id, snapshot()) ?: notOffline(noun) },
+        )
+        return json.decode<T>()
+    }
+
+    /** The full detail JSON for one entity, straight from the server (online only). */
+    suspend fun rawDetail(kind: EntityKind, id: String): JsonObject {
+        val (query, field) = when (kind) {
+            EntityKind.SCENES -> Q.scene to "findScene"
+            EntityKind.PERFORMERS -> Q.performer to "findPerformer"
+            EntityKind.STUDIOS -> Q.studio to "findStudio"
+            EntityKind.TAGS -> Q.tag to "findTag"
+            EntityKind.GALLERIES -> Q.gallery to "findGallery"
+            EntityKind.IMAGES -> Q.image to "findImage"
+            EntityKind.GROUPS -> Q.group to "findGroup"
+            EntityKind.MARKERS -> throw StashException("Markers have no detail page")
+        }
+        val node = client.execute(query, vars { put("id", id) })[field]
         if (node == null || node is JsonNull) throw StashException("Not found (id $id)")
-        return node.decode()
+        return node as? JsonObject ?: throw StashException("Unexpected answer for $field")
     }
 
     // ------------------------------------------------------------------ mutations
@@ -200,8 +286,15 @@ class StashRepository(
     suspend fun imageDecrementO(id: String): Int =
         client.execute(Q.imageDecrementO, vars { put("id", id) })["imageDecrementO"]?.jsonPrimitive?.intOrNull ?: 0
 
+    /** Play count +1. Offline (or if the server just vanished) it's kept on the phone and sent later. */
     suspend fun addPlay(id: String) {
-        client.execute(Q.sceneAddPlay, vars { put("id", id) })
+        if (connection.offline.value) return library.recordPlay(id, queue = true)
+        try {
+            client.execute(Q.sceneAddPlay, vars { put("id", id) })
+            library.recordPlay(id, queue = false)
+        } catch (e: ServerUnreachableException) {
+            library.recordPlay(id, queue = true)
+        }
     }
 
     // ------------------------------------------------------------------ editing
@@ -261,12 +354,45 @@ class StashRepository(
         return Ref(r["id"]!!.jsonPrimitive.content, r["name"]?.jsonPrimitive?.contentOrNull ?: name)
     }
 
+    /** Resume point + watch time. Offline (or if the server just vanished) it's kept on the phone and sent later. */
     suspend fun saveActivity(id: String, resumeSeconds: Double?, playedSeconds: Double?) {
+        if (connection.offline.value) return library.recordActivity(id, resumeSeconds, playedSeconds, queue = true)
+        try {
+            sendActivity(id, resumeSeconds, playedSeconds)
+            library.recordActivity(id, resumeSeconds, playedSeconds, queue = false)
+        } catch (e: ServerUnreachableException) {
+            library.recordActivity(id, resumeSeconds, playedSeconds, queue = true)
+        }
+    }
+
+    private suspend fun sendActivity(id: String, resumeSeconds: Double?, playedSeconds: Double?) {
         client.execute(Q.sceneSaveActivity, vars {
             put("id", id)
             put("resume", resumeSeconds)
             put("duration", playedSeconds)
         })
+    }
+
+    /** Sends plays and watch time recorded while offline, oldest first. Stops at the first failure. */
+    suspend fun flushPending(): Int {
+        if (connection.offline.value) return 0
+        val todo = library.pending()
+        var sent = 0
+        for (p in todo) {
+            try {
+                when (p.type) {
+                    "play" -> client.execute(Q.sceneAddPlay, vars { put("id", p.sceneId) })
+                    else -> sendActivity(p.sceneId, p.resume, p.duration)
+                }
+                sent++
+            } catch (e: ServerUnreachableException) {
+                break
+            } catch (e: StashException) {
+                sent++ // the scene was deleted on the server, or similar: drop it rather than retry forever
+            }
+        }
+        if (sent > 0) library.dropPending(sent)
+        return sent
     }
 }
 

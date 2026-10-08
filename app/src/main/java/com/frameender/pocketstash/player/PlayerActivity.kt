@@ -61,6 +61,8 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
+import android.net.Uri
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -135,7 +137,9 @@ class PlayerActivity : ComponentActivity() {
         hideSystemBars()
 
         val conn = container.connection
-        val dataSource = OkHttpDataSource.Factory(conn.http)
+        // Local files (downloads) through the default source, everything else through the
+        // authenticated OkHttp client.
+        val dataSource = DefaultDataSource.Factory(this, OkHttpDataSource.Factory(conn.http))
         player = ExoPlayer.Builder(this)
             .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(dataSource))
             .setHandleAudioBecomingNoisy(true)
@@ -172,13 +176,23 @@ class PlayerActivity : ComponentActivity() {
                 title = scene.displayTitle
                 markers = scene.markers.sortedBy { it.seconds }
 
-                // Direct file first, then whatever Stash offers (HLS/DASH/MP4/WebM transcodes).
-                val direct = scene.paths.stream?.let { StreamEndpoint(it, null, "Direct") }
-                streams = (listOfNotNull(direct) + scene.streams)
-                    .distinctBy { it.url }
-                    .map { it.copy(url = conn.media(it.url) ?: it.url) }
+                // The downloaded copy first (no network needed), then, online, the direct file
+                // and whatever Stash offers (HLS/DASH/MP4/WebM transcodes).
+                val downloads = container.downloads
+                val local = downloads.localFile(id)?.takeIf { container.repository.isDownloaded(scene) }?.let { f ->
+                    StreamEndpoint(Uri.fromFile(f).toString(), null, "Downloaded · " + (downloads.get(id)?.qualityLabel ?: "on this phone"))
+                }
+                val offline = container.repository.isOffline
+                val server = if (offline) emptyList() else {
+                    val direct = scene.paths.stream?.let { StreamEndpoint(it, null, "Direct") }
+                    (listOfNotNull(direct) + scene.streams).map { it.copy(url = conn.media(it.url) ?: it.url) }
+                }
+                streams = (listOfNotNull(local) + server).distinctBy { it.url }
                 if (streams.isEmpty()) {
-                    toast("Stash returned no playable streams")
+                    toast(
+                        if (offline) "This scene isn't downloaded. In offline mode only downloads can play."
+                        else "Stash returned no playable streams",
+                    )
                     finish(); return@launch
                 }
 
@@ -482,7 +496,7 @@ class PlayerActivity : ComponentActivity() {
                 }
             }
 
-            if (sceneId != null) {
+            if (sceneId != null && !container.repository.isOffline) {
                 IconButton(onClick = { openMarkerForm() }) { Icon(Icons.Filled.BookmarkAdd, "Add marker here", tint = Color.White) }
             }
             MuteButton(ui)

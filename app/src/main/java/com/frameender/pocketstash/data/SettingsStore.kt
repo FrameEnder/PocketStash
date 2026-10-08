@@ -50,7 +50,7 @@ data class AppSettings(
     val startMuted: Boolean = false,
 
     // Storage & offline
-    /** When the server can't be reached, open screens from saved copies. */
+    /** When the server can't be reached, switch to offline mode (downloads and saved lists only). */
     val offlineFallback: Boolean = true,
     /** Re-save every offline collection once a day (Wi-Fi + charging). */
     val offlineAutoRefresh: Boolean = false,
@@ -58,6 +58,8 @@ data class AppSettings(
     val imageCacheMb: Int = 512,
     /** JSON list of OfflineCollection. */
     val offlineCollections: String = "",
+    /** Only download scenes over Wi-Fi (unmetered networks). */
+    val downloadWifiOnly: Boolean = true,
 ) {
     val baseUrl: HttpUrl? get() = normalizeServerUrl(serverUrl)
     val isConfigured: Boolean get() = baseUrl != null
@@ -94,6 +96,7 @@ class SettingsStore(private val context: Context) {
         val offRefresh = booleanPreferencesKey("offline_refresh")
         val imgCache = intPreferencesKey("image_cache_mb")
         val offCollections = stringPreferencesKey("offline_collections")
+        val dlWifi = booleanPreferencesKey("download_wifi_only")
     }
 
     private fun Preferences.toSettings(): AppSettings {
@@ -120,6 +123,7 @@ class SettingsStore(private val context: Context) {
             offlineAutoRefresh = this[K.offRefresh] ?: d.offlineAutoRefresh,
             imageCacheMb = this[K.imgCache] ?: d.imageCacheMb,
             offlineCollections = this[K.offCollections] ?: d.offlineCollections,
+            downloadWifiOnly = this[K.dlWifi] ?: d.downloadWifiOnly,
         )
     }
 
@@ -145,6 +149,7 @@ class SettingsStore(private val context: Context) {
         this[K.offRefresh] = s.offlineAutoRefresh
         this[K.imgCache] = s.imageCacheMb
         this[K.offCollections] = s.offlineCollections
+        this[K.dlWifi] = s.downloadWifiOnly
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { it.toSettings() }

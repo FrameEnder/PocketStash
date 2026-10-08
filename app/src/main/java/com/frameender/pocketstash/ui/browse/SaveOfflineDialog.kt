@@ -18,6 +18,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,11 +40,17 @@ import com.frameender.pocketstash.ui.theme.Ink
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SaveOfflineDialog(base: OfflineCollection, total: Int?, onDismiss: () -> Unit) {
-    val saver = LocalContext.current.container.offlineSaver
+    val container = LocalContext.current.container
+    val saver = container.offlineSaver
+    val settings by container.settings.collectAsState()
+    val wifiOnly = settings?.downloadWifiOnly != false
     val kind = base.entityKind
     val options = listOf(40, 120, 400, 1000).let { o -> if (total != null) o.filter { it < total } + total else o }.distinct()
     var max by remember { mutableStateOf(options.firstOrNull { it >= 120 } ?: options.last()) }
     var full by remember { mutableStateOf(true) }
+    // Scenes: also download the videos, and in which quality.
+    var videos by remember { mutableStateOf(base.downloadQuality != null) }
+    var quality by remember { mutableStateOf(base.downloadQuality ?: "original") }
     val noun = kind.label.lowercase()
 
     AlertDialog(
@@ -53,7 +60,7 @@ fun SaveOfflineDialog(base: OfflineCollection, total: Int?, onDismiss: () -> Uni
         text = {
             Column {
                 Text(
-                    "Keeps “${base.label}” on this phone so it still opens when your Stash server can't be reached.",
+                    "Keeps “${base.label}” on this phone. In offline mode it's part of the library you can browse, search and sort.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text("How many $noun", style = MaterialTheme.typography.labelMedium, color = Ink.Muted, modifier = Modifier.padding(top = 12.dp))
@@ -67,6 +74,24 @@ fun SaveOfflineDialog(base: OfflineCollection, total: Int?, onDismiss: () -> Uni
                         )
                     }
                 }
+                if (kind == EntityKind.SCENES) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                        Checkbox(videos, { videos = it }, colors = CheckboxDefaults.colors(checkedColor = Ink.Amber))
+                        Text("Also download the videos", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    if (videos) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("original" to "Original", "STANDARD_HD" to "720p MP4", "STANDARD" to "480p MP4").forEach { (k, label) ->
+                                FilterChip(
+                                    selected = quality == k,
+                                    onClick = { quality = k },
+                                    label = { Text(label) },
+                                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Ink.AmberDim, selectedLabelColor = Ink.Text),
+                                )
+                            }
+                        }
+                    }
+                }
                 if (kind == EntityKind.IMAGES) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(full, { full = it }, colors = CheckboxDefaults.colors(checkedColor = Ink.Amber))
@@ -78,8 +103,12 @@ fun SaveOfflineDialog(base: OfflineCollection, total: Int?, onDismiss: () -> Uni
                         EntityKind.IMAGES ->
                             if (full) "Uses more space. Video clips keep only their thumbnails."
                             else "Thumbnails only: quick and small."
-                        EntityKind.SCENES, EntityKind.MARKERS ->
-                            "Saves the list, each scene's page and its screenshot. The videos themselves still need the server."
+                        EntityKind.SCENES ->
+                            if (videos) "Saves each scene's page and screenshot, and queues the videos in Downloads " +
+                                "(${if (wifiOnly) "on Wi-Fi" else "on any connection"}). Converted MP4s take longer; Stash makes them as they download."
+                            else "Saves the list, each scene's page and its screenshot. Without the videos, scenes show as info only offline."
+                        EntityKind.MARKERS ->
+                            "Saves the list and each marker's scene page. Markers play offline when their scene is downloaded."
                         EntityKind.GALLERIES ->
                             "Saves the list, each gallery's page, and the first page of its images."
                         else -> "Saves the list, each page, and the first page of its scenes."
@@ -90,7 +119,13 @@ fun SaveOfflineDialog(base: OfflineCollection, total: Int?, onDismiss: () -> Uni
         },
         confirmButton = {
             TextButton(onClick = {
-                saver.save(base.copy(max = max, fullImages = full && kind == EntityKind.IMAGES))
+                saver.save(
+                    base.copy(
+                        max = max,
+                        fullImages = full && kind == EntityKind.IMAGES,
+                        downloadQuality = if (kind == EntityKind.SCENES && videos) quality else null,
+                    ),
+                )
                 onDismiss()
             }) { Text("Save", maxLines = 1) }
         },

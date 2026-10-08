@@ -40,7 +40,11 @@ class BrowseViewModel(
     private var job: Job? = null
     private var searchJob: Job? = null
 
-    init { reload() }
+    init {
+        reload()
+        // Going offline or back online changes the whole database: start the list over.
+        viewModelScope.launch { repo.modeChanges.collect { reload() } }
+    }
 
     fun reload(refreshing: Boolean = false) {
         job?.cancel()

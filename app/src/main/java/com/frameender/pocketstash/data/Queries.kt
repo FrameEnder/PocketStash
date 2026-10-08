@@ -70,8 +70,8 @@ fragment MarkerCard on SceneMarker {
     // ---------- browse queries ----------
 
     val findScenes = """
-query FindScenes(${'$'}filter: FindFilterType, ${'$'}f: SceneFilterType) {
-  result: findScenes(filter: ${'$'}filter, scene_filter: ${'$'}f) { count items: scenes { ...SceneCard } }
+query FindScenes(${'$'}filter: FindFilterType, ${'$'}f: SceneFilterType, ${'$'}ids: [ID!]) {
+  result: findScenes(filter: ${'$'}filter, scene_filter: ${'$'}f, ids: ${'$'}ids) { count items: scenes { ...SceneCard } }
 }$SCENE_CARD"""
 
     val findPerformers = """
@@ -119,7 +119,7 @@ query Scene(${'$'}id: ID!) {
     files { id path basename size format width height duration video_codec audio_codec frame_rate bit_rate }
     paths { screenshot preview stream webp vtt sprite caption }
     captions { language_code caption_type }
-    scene_markers { id title seconds end_seconds primary_tag { id name } tags { id name } preview screenshot stream }
+    scene_markers { id title seconds end_seconds created_at primary_tag { id name } tags { id name } preview screenshot stream }
     galleries { id title image_count paths { cover } }
     studio { id name image_path }
     groups { scene_index group { id name front_image_path } }
@@ -135,7 +135,7 @@ query Performer(${'$'}id: ID!) {
     id name disambiguation urls gender birthdate death_date ethnicity country
     eye_color hair_color height_cm weight measurements fake_tits career_length
     tattoos piercings alias_list favorite rating100 details image_path
-    scene_count image_count gallery_count group_count o_counter
+    scene_count image_count gallery_count group_count o_counter created_at updated_at
     tags { id name }
   }
 }"""
@@ -144,7 +144,7 @@ query Performer(${'$'}id: ID!) {
 query Studio(${'$'}id: ID!) {
   findStudio(id: ${'$'}id) {
     id name urls aliases details rating100 favorite image_path
-    scene_count image_count gallery_count performer_count group_count
+    scene_count image_count gallery_count performer_count group_count created_at updated_at
     parent_studio { id name image_path }
     child_studios { id name image_path }
     tags { id name }
@@ -156,6 +156,7 @@ query Tag(${'$'}id: ID!) {
   findTag(id: ${'$'}id) {
     id name description aliases favorite image_path
     scene_count scene_marker_count image_count gallery_count performer_count studio_count group_count
+    created_at updated_at sort_name
     parents { id name image_path }
     children { id name image_path }
   }
@@ -164,7 +165,7 @@ query Tag(${'$'}id: ID!) {
     val gallery = """
 query Gallery(${'$'}id: ID!) {
   findGallery(id: ${'$'}id) {
-    id title code date details photographer urls rating100 organized image_count
+    id title code date details photographer urls rating100 organized image_count created_at updated_at
     paths { cover }
     files { path }
     folder { path }
@@ -178,7 +179,7 @@ query Gallery(${'$'}id: ID!) {
     val image = """
 query Image(${'$'}id: ID!) {
   findImage(id: ${'$'}id) {
-    id title date details rating100 organized o_counter
+    id title date details rating100 organized o_counter created_at updated_at
     paths { thumbnail preview image }
     visual_files {
       __typename
@@ -186,8 +187,8 @@ query Image(${'$'}id: ID!) {
       ... on VideoFile { path width height }
     }
     galleries { id title }
-    studio { id name }
-    performers { id name }
+    studio { id name image_path }
+    performers { id name image_path }
     tags { id name }
   }
 }"""
@@ -196,7 +197,7 @@ query Image(${'$'}id: ID!) {
 query Group(${'$'}id: ID!) {
   findGroup(id: ${'$'}id) {
     id name aliases duration date rating100 director synopsis urls
-    front_image_path back_image_path scene_count
+    front_image_path back_image_path scene_count created_at updated_at
     studio { id name image_path }
     tags { id name }
     containing_groups { description group { id name front_image_path } }

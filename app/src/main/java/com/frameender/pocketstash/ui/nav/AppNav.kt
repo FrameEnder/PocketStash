@@ -54,6 +54,8 @@ import com.frameender.pocketstash.ui.search.SearchScreen
 import com.frameender.pocketstash.ui.settings.SettingsScreen
 import com.frameender.pocketstash.ui.settings.SettingsSectionScreen
 import com.frameender.pocketstash.ui.settings.UpdatePopup
+import com.frameender.pocketstash.ui.downloads.DownloadsScreen
+import androidx.compose.material3.TextButton
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -123,6 +125,7 @@ fun AppNav(configured: Boolean) {
         container.pendingRoute.collect { route ->
             when (route) {
                 "updates" -> if (configured) navigator.updates()
+                "downloads" -> if (configured) navigator.downloads()
             }
             if (route != null) container.pendingRoute.value = null
         }
@@ -133,6 +136,8 @@ fun AppNav(configured: Boolean) {
     val onSetup = destination?.hasRoute<SetupRoute>() == true
     val offlineSave by container.offlineSaver.progress.collectAsState()
     val offline by container.connection.offline.collectAsState()
+    val serverBack by container.connection.serverBack.collectAsState()
+    val downloadItems by container.downloads.items.collectAsState()
 
     // Coming back to the app re-checks for updates if the last check is over 30 minutes old.
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -222,6 +227,7 @@ fun AppNav(configured: Boolean) {
                 composable<GroupRoute> { GroupDetailScreen(it.toRoute<GroupRoute>().id) }
                 composable<ImageViewerRoute> { ImageViewerScreen(it.toRoute<ImageViewerRoute>()) }
                 composable<UpdatesRoute> { UpdatesScreen() }
+                composable<DownloadsRoute> { DownloadsScreen() }
                 composable<HomeLayoutRoute> { HomeLayoutScreen() }
                 composable<EditRoute> { entry ->
                     val r = entry.toRoute<EditRoute>()
@@ -266,17 +272,27 @@ fun AppNav(configured: Boolean) {
                 }
             }
 
-            // Showing saved copies because the server can't be reached.
+            // Offline mode: the app is running on what's on the phone.
             AnimatedVisibility(
-                visible = offline && offlineSave == null,
+                visible = offline && offlineSave == null && !onSetup,
                 enter = fadeIn(), exit = fadeOut(),
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
             ) {
-                Surface(shape = RoundedCornerShape(50), color = Ink.Surface3, border = BorderStroke(1.dp, Ink.Line)) {
-                    Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = Ink.Surface3,
+                    border = BorderStroke(1.dp, if (serverBack) Ink.Amber else Ink.Line),
+                ) {
+                    Row(Modifier.padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.CloudOff, null, tint = Ink.Muted, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Offline · showing saved copies", style = MaterialTheme.typography.labelMedium, color = Ink.Text)
+                        Text(
+                            if (serverBack) "Server's back" else "Offline mode · ${downloadItems.count { it.done }} downloaded",
+                            style = MaterialTheme.typography.labelMedium, color = Ink.Text, maxLines = 1,
+                        )
+                        TextButton(onClick = { container.goOnline() }) {
+                            Text("Go online", color = Ink.Amber, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+                        }
                     }
                 }
             }

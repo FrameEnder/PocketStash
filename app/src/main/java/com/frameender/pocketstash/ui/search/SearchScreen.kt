@@ -74,6 +74,11 @@ class SearchViewModel(private val repo: StashRepository) : ViewModel() {
     val state: StateFlow<SearchState> = _state
     private var job: Job? = null
 
+    init {
+        // Same search again against the new source when going offline or back online.
+        viewModelScope.launch { repo.modeChanges.collect { setText(_state.value.text) } }
+    }
+
     fun setText(text: String) {
         _state.update { it.copy(text = text) }
         job?.cancel()

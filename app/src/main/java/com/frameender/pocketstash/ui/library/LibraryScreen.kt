@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -19,6 +20,11 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Bookmarks
+import androidx.compose.material.icons.outlined.DownloadForOffline
+import androidx.compose.foundation.layout.Row
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.Alignment
+import com.frameender.pocketstash.ui.components.Pill
 import androidx.compose.material.icons.outlined.Business
 import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.Image
@@ -69,9 +75,12 @@ private val tiles = listOf(
 @Composable
 fun LibraryScreen() {
     val nav = LocalNavigator.current
-    val repo = LocalContext.current.container.repository
+    val container = LocalContext.current.container
+    val repo = container.repository
+    val offline by container.connection.offline.collectAsState()
+    val downloads by container.downloads.items.collectAsState()
     var stats by remember { mutableStateOf<Stats?>(null) }
-    LaunchedEffect(Unit) { stats = runCatching { repo.stats() }.getOrNull() }
+    LaunchedEffect(offline) { stats = runCatching { repo.stats() }.getOrNull() }
 
     Scaffold(
         containerColor = Ink.Bg,
@@ -90,6 +99,35 @@ fun LibraryScreen() {
             verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.padding(pad).fillMaxSize(),
         ) {
+            item(span = { GridItemSpan(maxLineSpan) }, key = "downloads") {
+                val done = downloads.count { it.done }
+                val active = downloads.count { !it.done && it.status != "failed" }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Ink.Surface)
+                        .border(1.dp, if (offline) Ink.Amber.copy(alpha = 0.5f) else Ink.Line, RoundedCornerShape(14.dp))
+                        .clickable { nav.downloads() }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Outlined.DownloadForOffline, null, tint = Ink.Amber, modifier = Modifier.size(28.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Downloads", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            when {
+                                downloads.isEmpty() -> "Download scenes to watch without your server"
+                                active > 0 -> "$done ready · $active downloading"
+                                else -> "$done ready to watch offline"
+                            },
+                            style = MaterialTheme.typography.labelMedium, color = Ink.Muted,
+                        )
+                    }
+                    if (offline) Pill("OFFLINE", accent = true)
+                }
+            }
             items(tiles, key = { it.kind.name }) { tile ->
                 Column(
                     Modifier

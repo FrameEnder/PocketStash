@@ -12,6 +12,10 @@ import androidx.work.WorkerParameters
 import coil3.SingletonImageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import com.frameender.pocketstash.container
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -43,6 +47,8 @@ data class OfflineCollection(
     val max: Int,
     /** Images: also keep the full-size pictures, not just thumbnails. */
     val fullImages: Boolean = false,
+    /** Scenes: also download each video, in this quality ("original", "STANDARD_HD"…); null = details only. */
+    val downloadQuality: String? = null,
     /** How many entries the last save stored. */
     val count: Int = 0,
     /** When it was last saved (epoch ms). */
@@ -77,17 +83,21 @@ data class OfflineCollection(
 }
 
 /**
- * "Save for offline": walks a list the same way the app browses it, so every page of results,
- * every entry's detail page (with the first page of its related grid), and their pictures land
- * in the caches. Later, when the server can't be reached, those screens open from the saved copies.
+ * "Save for offline": walks a list the same way the app browses it and stores every entry's
+ * full details in the phone's offline library, along with the first page of each one's related
+ * grid (a performer's scenes, a gallery's images…). In offline mode those become part of the
+ * database the whole app runs on, so any sort, search or filter works on them.
  *
- * Answers go into the [ResponseCache]; pictures into Coil's image cache (size set in Settings).
- * Videos themselves are not saved, only their screenshots. Saved collections are listed in
- * Settings → Storage & offline, where they can be refreshed or forgotten.
+ * Pictures go into Coil's image cache (size set in Settings). For scene lists, the videos can be
+ * downloaded too (handed to [SceneDownloads]); otherwise scenes are browsable but not playable
+ * offline. Saved collections are listed in Settings → Storage & offline, where they can be
+ * refreshed or forgotten.
  */
 class OfflineSaver(
     private val context: Context,
     private val repo: StashRepository,
+    private val library: OfflineLibrary,
+    private val downloads: () -> SceneDownloads,
     private val scope: CoroutineScope,
     private val settings: suspend () -> AppSettings,
     private val update: suspend ((AppSettings) -> AppSettings) -> Unit,
@@ -155,27 +165,43 @@ class OfflineSaver(
         job?.cancel()
     }
 
-    /** Pages the grid asks for (40 per page), plus the image viewer's 60-per-page pages. */
-    private suspend fun walk(c: OfflineCollection, perPage: Int): List<CardItem> {
-        val items = mutableListOf<CardItem>()
+    /** Every entry of the list (up to [OfflineCollection.max]) as raw JSON, straight from the server. */
+    private suspend fun walk(c: OfflineCollection): List<JsonObject> {
+        val items = mutableListOf<JsonObject>()
         var page = 1
+        val perPage = 40
         while (items.size < c.max) {
             currentCoroutineContext().ensureActive()
-            val p = repo.browse(c.entityKind, c.scope, c.query(), page, perPage)
+            val p = repo.browseRaw(c.entityKind, c.scope, c.query(), page, perPage)
             items += p.items
             if (p.items.size < perPage || items.size >= p.total) break
             page++
         }
-        return items
+        return items.take(c.max)
+    }
+
+    /**
+     * Stores items that were listed under [scope] so the phone can list them there again.
+     * Image cards don't say which gallery they're in, so that link is added from the scope.
+     */
+    private fun storeScoped(kind: EntityKind, items: List<JsonObject>, scope: Scope) {
+        for (o in items) {
+            val linked = if (kind == EntityKind.IMAGES && scope is Scope.Gallery && o["galleries"] == null) {
+                JsonObject(o + ("galleries" to JsonArray(listOf(JsonObject(mapOf("id" to JsonPrimitive(scope.id)))))))
+            } else o
+            if (kind == EntityKind.MARKERS) continue // markers live inside their scene
+            library.put(kind, linked)
+        }
     }
 
     /** Does the actual saving. Suspends until done; also used by the background refresh. */
     suspend fun run(c: OfflineCollection): Int = withContext(Dispatchers.IO) {
+        if (repo.isOffline) throw StashException("You're in offline mode. Go online to save lists.")
         try {
             progress.value = Progress(c.label, 0, 0)
             val kind = c.entityKind
-            val todo = walk(c, 40).take(c.max)
-            if (kind == EntityKind.IMAGES) runCatching { walk(c, 60) }
+            val todo = walk(c)
+            storeScoped(kind, todo, c.scope)
 
             val loader = SingletonImageLoader.get(context)
             suspend fun fetch(url: String?) {
@@ -184,29 +210,57 @@ class OfflineSaver(
                     ImageRequest.Builder(context).data(url).memoryCachePolicy(CachePolicy.DISABLED).build(),
                 )
             }
-            /** The first page of a detail screen's related grid, as that screen asks for it. */
+            /** The first page of a detail screen's related grid, stored with its link. */
             suspend fun related(k: EntityKind, s: Scope) {
-                runCatching { repo.browse(k, s, BrowseSpec.defaultSort(k, s), 1, 40) }
+                runCatching {
+                    val page = repo.browseRaw(k, s, BrowseSpec.defaultSort(k, s), 1, 40)
+                    storeScoped(k, page.items, s)
+                }
+            }
+            suspend fun detail(k: EntityKind, id: String) {
+                runCatching { library.put(k, repo.rawDetail(k, id)) }
             }
 
+            val sceneIds = LinkedHashSet<String>()
             todo.forEachIndexed { i, item ->
                 currentCoroutineContext().ensureActive()
                 progress.value = Progress(c.label, i, todo.size)
-                runCatching {
-                    when (kind) {
-                        EntityKind.SCENES -> repo.scene(item.id)
-                        EntityKind.PERFORMERS -> { repo.performer(item.id); related(EntityKind.SCENES, Scope.Performer(item.id)) }
-                        EntityKind.STUDIOS -> { repo.studio(item.id); related(EntityKind.SCENES, Scope.Studio(item.id)) }
-                        EntityKind.TAGS -> { repo.tag(item.id); related(EntityKind.SCENES, Scope.Tag(item.id)) }
-                        EntityKind.GROUPS -> { repo.group(item.id); related(EntityKind.SCENES, Scope.Group(item.id)) }
-                        EntityKind.GALLERIES -> { repo.gallery(item.id); related(EntityKind.IMAGES, Scope.Gallery(item.id)) }
-                        EntityKind.MARKERS -> item.sceneId?.let { repo.scene(it) }
-                        EntityKind.IMAGES -> Unit
+                val id = (item["id"] as? JsonPrimitive)?.contentOrNull ?: return@forEachIndexed
+                when (kind) {
+                    EntityKind.SCENES -> { detail(kind, id); sceneIds += id }
+                    EntityKind.PERFORMERS -> { detail(kind, id); related(EntityKind.SCENES, Scope.Performer(id)) }
+                    EntityKind.STUDIOS -> { detail(kind, id); related(EntityKind.SCENES, Scope.Studio(id)) }
+                    EntityKind.TAGS -> { detail(kind, id); related(EntityKind.SCENES, Scope.Tag(id)) }
+                    EntityKind.GROUPS -> { detail(kind, id); related(EntityKind.SCENES, Scope.Group(id)) }
+                    EntityKind.GALLERIES -> { detail(kind, id); related(EntityKind.IMAGES, Scope.Gallery(id)) }
+                    EntityKind.IMAGES -> detail(kind, id)
+                    EntityKind.MARKERS -> (item["scene"] as? JsonObject)?.let { sc ->
+                        (sc["id"] as? JsonPrimitive)?.contentOrNull?.let { sid -> detail(EntityKind.SCENES, sid); sceneIds += sid }
                     }
                 }
-                fetch(item.image)
-                if (c.fullImages && kind == EntityKind.IMAGES && !item.isVideo) fetch(item.fullImage)
+                // The pictures the list and detail screens show.
+                val card = runCatching { repo.cardFor(kind, item) }.getOrNull()
+                fetch(card?.image)
+                if (c.fullImages && kind == EntityKind.IMAGES && card?.isVideo == false) fetch(card?.fullImage)
             }
+            library.markListScenes(sceneIds)
+
+            // Scene lists can download the videos too.
+            val quality = c.downloadQuality
+            if (quality != null && kind == EntityKind.SCENES) {
+                val dl = downloads()
+                for (id in sceneIds) {
+                    currentCoroutineContext().ensureActive()
+                    // Already downloaded, or on its way: leave it be (failed ones get another go).
+                    if (dl.get(id)?.let { it.status != SceneDownload.FAILED } == true) continue
+                    runCatching {
+                        val scene = repo.scene(id)
+                        dl.optionFor(scene, quality)?.let { dl.enqueue(scene, it) }
+                    }
+                }
+            }
+
+            library.flush()
             remember(c.copy(count = todo.size, savedAt = System.currentTimeMillis()))
             todo.size
         } finally {

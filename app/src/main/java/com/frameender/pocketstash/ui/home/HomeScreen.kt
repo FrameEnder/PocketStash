@@ -99,6 +99,10 @@ class HomeViewModel(private val repo: StashRepository) : ViewModel() {
     private var layoutJson: String? = null
     private var job: Job? = null
 
+    init {
+        viewModelScope.launch { repo.modeChanges.collect { load() } }
+    }
+
     /** Called whenever the saved layout changes; reloads only if it really did. */
     fun setLayout(json: String) {
         if (json == layoutJson) return

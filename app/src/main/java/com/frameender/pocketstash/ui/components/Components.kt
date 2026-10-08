@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
@@ -91,6 +92,21 @@ fun EntityCard(
                 Icon(
                     Icons.Filled.Favorite, null, tint = Ink.Red,
                     modifier = Modifier.align(Alignment.TopStart).padding(6.dp).size(18.dp),
+                )
+            }
+            if (item.infoOnly) {
+                // Offline mode: details are on the phone, the video isn't.
+                Box(Modifier.fillMaxSize().background(Ink.Bg.copy(alpha = 0.55f)))
+                Pill("Info only", modifier = Modifier.align(Alignment.TopStart).padding(6.dp))
+            } else if (item.downloaded) {
+                Icon(
+                    Icons.Filled.DownloadDone, "Downloaded", tint = Ink.OnAmber,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .size(20.dp)
+                        .background(Ink.Amber, CircleShape)
+                        .padding(3.dp),
                 )
             }
             if (item.isVideo) {

@@ -137,6 +137,7 @@ fun BrowseGrid(
 
 @Composable
 private fun BrowseControls(vm: BrowseViewModel, state: BrowseState, showSearch: Boolean, offlineLabel: String) {
+    val offlineNow by LocalContext.current.container.connection.offline.collectAsState()
     val context = LocalContext.current
     var saving by remember { mutableStateOf(false) }
     val sorts = remember(vm.kind) { BrowseSpec.sorts(vm.kind) }
@@ -216,7 +217,8 @@ private fun BrowseControls(vm: BrowseViewModel, state: BrowseState, showSearch: 
                 style = MaterialTheme.typography.labelMedium,
                 color = Ink.Muted,
             )
-            IconButton(onClick = {
+            // Saving needs the server; offline, everything shown is already on the phone.
+            if (!offlineNow) IconButton(onClick = {
                 // A random order can't be saved: it's different every time it's asked for.
                 if (q.sort == "random") Toast.makeText(context, "Pick a sort other than Random to save this list", Toast.LENGTH_LONG).show()
                 else saving = true

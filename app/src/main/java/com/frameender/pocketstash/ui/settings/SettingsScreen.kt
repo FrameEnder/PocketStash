@@ -102,11 +102,14 @@ private val SEARCH_INDEX = listOf(
     SettingEntry("Count a play after", SettingsSection.PLAYER, "play count threshold seconds"),
     SettingEntry("Player gestures", SettingsSection.PLAYER, "double tap seek skip brightness volume swipe"),
     SettingEntry("Library stats", SettingsSection.LIBRARY, "size count scenes runtime watched"),
-    SettingEntry("Saved for offline", SettingsSection.STORAGE, "offline collections download refresh"),
-    SettingEntry("Use saved copies offline", SettingsSection.STORAGE, "offline tailscale down unreachable"),
+    SettingEntry("Offline mode", SettingsSection.STORAGE, "offline airplane flight no server local only"),
+    SettingEntry("Switch to offline automatically", SettingsSection.STORAGE, "offline tailscale down unreachable fallback"),
+    SettingEntry("Downloads", SettingsSection.STORAGE, "download video save phone offline playback watch"),
+    SettingEntry("Download on Wi-Fi only", SettingsSection.STORAGE, "wifi mobile data cellular metered download"),
+    SettingEntry("Saved lists", SettingsSection.STORAGE, "offline collections save refresh"),
     SettingEntry("Refresh saved lists daily", SettingsSection.STORAGE, "offline background wifi charging"),
     SettingEntry("Image cache size", SettingsSection.STORAGE, "storage space disk thumbnails"),
-    SettingEntry("Clear cache", SettingsSection.STORAGE, "storage space free delete"),
+    SettingEntry("Clear cache", SettingsSection.STORAGE, "storage space free delete clear saved info images"),
     SettingEntry("Update channel", SettingsSection.UPDATES, "stable nightly release version"),
     SettingEntry("Update notifications", SettingsSection.UPDATES, "notify pop-up background check"),
     SettingEntry("GitHub token", SettingsSection.UPDATES, "private repo"),
@@ -116,7 +119,9 @@ private val SEARCH_INDEX = listOf(
 private fun mb(n: Int) = if (n >= 1024) "${n / 1024} GB" else "$n MB"
 
 /** Live summary shown under each category on the main page. */
-private fun summary(section: SettingsSection, s: AppSettings, saved: Int, version: String, build: Long): String = when (section) {
+private fun summary(
+    section: SettingsSection, s: AppSettings, saved: Int, downloaded: Int, offline: Boolean, version: String, build: Long,
+): String = when (section) {
     SettingsSection.SERVER -> s.baseUrl?.let { it.host + ":" + it.port } ?: "Not set up"
     SettingsSection.APPEARANCE ->
         (Accents.all.firstOrNull { it.key == s.accent }?.label ?: "Amber") + " highlight · ${s.gridCardWidth} dp cards"
@@ -130,7 +135,11 @@ private fun summary(section: SettingsSection, s: AppSettings, saved: Int, versio
     ).joinToString(" · ")
     SettingsSection.LIBRARY -> "Counts, sizes and watch time"
     SettingsSection.STORAGE ->
-        "${mb(s.imageCacheMb)} image cache · " + if (saved == 0) "nothing saved offline" else "$saved saved for offline"
+        listOfNotNull(
+            "Offline mode on".takeIf { offline },
+            if (downloaded == 0) "No downloads" else "$downloaded downloaded",
+            if (saved == 0) "no saved lists" else "$saved saved ${if (saved == 1) "list" else "lists"}",
+        ).joinToString(" · ")
     SettingsSection.UPDATES ->
         s.updateChannel.replaceFirstChar { it.uppercase() } + " channel · " + if (s.autoUpdateCheck) "checks every 6 h" else "manual checks"
     SettingsSection.ABOUT -> "PocketStash $version · build $build"
@@ -160,6 +169,9 @@ fun SettingsScreen() {
     val version = remember { container.updater.installedVersionName() }
     val build = remember { container.updater.installedVersionCode() }
     val saved = container.offlineSaver.collections(s).size
+    val downloadItems by container.downloads.items.collectAsState()
+    val downloaded = downloadItems.count { it.done }
+    val offlineNow by container.connection.offline.collectAsState()
 
     fun open(section: SettingsSection) {
         when (section) {
@@ -239,7 +251,7 @@ fun SettingsScreen() {
                                 icon = section.icon,
                                 tint = section.tint,
                                 title = section.title,
-                                summary = summary(section, s, saved, version, build),
+                                summary = summary(section, s, saved, downloaded, offlineNow, version, build),
                                 badge = if (section == SettingsSection.UPDATES && update != null) "NEW" else null,
                             ) { open(section) }
                         }
@@ -259,8 +271,8 @@ private fun ConnectionCard(s: AppSettings, onClick: () -> Unit) {
     var ping by remember { mutableStateOf<Long?>(null) }
     var version by remember { mutableStateOf<String?>(null) }
     var failed by remember { mutableStateOf(false) }
-    LaunchedEffect(s.serverUrl, s.apiKey) {
-        if (!s.isConfigured) return@LaunchedEffect
+    LaunchedEffect(s.serverUrl, s.apiKey, offline) {
+        if (!s.isConfigured || offline) return@LaunchedEffect
         failed = false
         ping = null
         val t0 = SystemClock.elapsedRealtime()
@@ -292,6 +304,7 @@ private fun ConnectionCard(s: AppSettings, onClick: () -> Unit) {
                 Text(
                     when {
                         !s.isConfigured -> "Not connected"
+                        offline -> "Offline mode"
                         version != null -> "Stash $version"
                         bad -> "Stash"
                         else -> "Connecting…"
@@ -313,6 +326,7 @@ private fun ConnectionCard(s: AppSettings, onClick: () -> Unit) {
                         (s.baseUrl?.let { it.host + ":" + it.port } ?: "Tap to set up your server") +
                             when {
                                 !s.isConfigured -> ""
+                                offline -> " · not using the server"
                                 bad -> " · unreachable"
                                 ping != null -> " · $ping ms"
                                 else -> " · checking…"
@@ -322,7 +336,7 @@ private fun ConnectionCard(s: AppSettings, onClick: () -> Unit) {
                 }
                 Text(
                     when {
-                        bad && s.offlineFallback -> "Showing saved copies where there are some"
+                        offline -> "Showing only what's saved on this phone"
                         s.apiKey.isBlank() -> "No API key · fine if Stash has no login"
                         else -> "Signed in with an API key ending ${s.apiKey.takeLast(4)}"
                     },

@@ -40,6 +40,10 @@ import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material.icons.filled.DownloadForOffline
+import com.frameender.pocketstash.data.SceneDownload
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -125,17 +129,19 @@ fun ServerPage(onDisconnected: () -> Unit) {
     var status by remember { mutableStateOf<String?>(null) }
     var ok by remember { mutableStateOf(false) }
     var confirmDisconnect by remember { mutableStateOf(false) }
+    var alsoDownloads by remember { mutableStateOf(true) }
 
     val fieldColors = OutlinedTextFieldDefaults.colors(
         unfocusedBorderColor = Ink.Line, focusedBorderColor = Ink.Amber,
         unfocusedContainerColor = Ink.Bg, focusedContainerColor = Ink.Bg,
     )
 
-    /** Saved pages and offline lists belong to one server and key; drop them when that changes. */
-    suspend fun forgetSavedData() {
-        withContext(Dispatchers.IO) { container.responseCache.clear() }
+    /** Drops the offline library and saved lists (and, if asked, the downloaded videos). */
+    suspend fun forgetSavedData(downloads: Boolean) {
+        if (downloads) container.downloads.deleteAll()
+        withContext(Dispatchers.IO) { container.library.clearAll() }
         container.settingsStore.update { it.copy(offlineCollections = "") }
-        container.connection.offline.value = false
+        container.goOnline()
     }
 
     SettingsPage("Server & connection") {
@@ -197,9 +203,10 @@ fun ServerPage(onDisconnected: () -> Unit) {
                                 val info = container.repository.testConnection(base, key)
                                 ok = true
                                 status = "Connected · Stash ${info.version ?: "(unknown version)"}"
-                                val changed = base != s.baseUrl || key != s.apiKey
-                                if (changed) forgetSavedData()
+                                // Saved data is kept: the same server is often reached by more than one
+                                // address (LAN, Tailscale, a proxy). Downloads check their file matches.
                                 container.settingsStore.saveServer(base.toString(), key)
+                                if (container.connection.offline.value) container.goOnline()
                             } catch (e: Exception) {
                                 ok = false
                                 status = e.friendly()
@@ -214,7 +221,7 @@ fun ServerPage(onDisconnected: () -> Unit) {
                 }
             }
         }
-        Hint("Find the key in Stash → Settings → Security → API Key. Switching server or key clears saved offline copies.")
+        Hint("Find the key in Stash → Settings → Security → API Key. Changing the address keeps your downloads; clear them in Storage & offline if you move to a different server.")
 
         GroupLabel("Network")
         SettingsCard {
@@ -228,7 +235,7 @@ fun ServerPage(onDisconnected: () -> Unit) {
 
         GroupLabel("Leave")
         SettingsCard {
-            ActionRow("Disconnect", "Forget this server, its key and everything saved from it", color = Ink.Red) {
+            ActionRow("Disconnect", "Forget this server, its key and what's saved from it", color = Ink.Red) {
                 confirmDisconnect = true
             }
         }
@@ -238,12 +245,32 @@ fun ServerPage(onDisconnected: () -> Unit) {
         AlertDialog(
             onDismissRequest = { confirmDisconnect = false },
             title = { Text("Disconnect?") },
-            text = { Text("PocketStash forgets this server and its API key, and clears everything saved for offline from it.") },
+            text = {
+                Column {
+                    Text("PocketStash forgets this server and its API key, and clears the info saved for offline.")
+                    if (container.downloads.items.value.isNotEmpty()) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 10.dp).clickable { alsoDownloads = !alsoDownloads },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(
+                                checked = alsoDownloads, onCheckedChange = { alsoDownloads = it },
+                                colors = CheckboxDefaults.colors(checkedColor = Ink.Amber, checkmarkColor = Ink.OnAmber),
+                            )
+                            Text(
+                                "Also delete ${container.downloads.items.value.size} downloaded videos " +
+                                    "(${formatBytes(container.downloads.totalBytes().toDouble())})",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    }
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDisconnect = false
                     scope.launch {
-                        forgetSavedData()
+                        forgetSavedData(alsoDownloads)
                         container.settingsStore.clearServer()
                         onDisconnected()
                     }
@@ -433,7 +460,8 @@ fun LibraryStatsPage() {
     val container = LocalContext.current.container
     var stats by remember { mutableStateOf<Stats?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) {
+    val offline by container.connection.offline.collectAsState()
+    LaunchedEffect(offline) {
         try {
             stats = container.repository.stats()
         } catch (e: Exception) {
@@ -471,7 +499,10 @@ fun LibraryStatsPage() {
                     StatTile("Watched", "%,.1f h".format(st.totalPlayDuration / 3600))
                     StatTile("O count", Format.count(st.totalOCount))
                 }
-                Hint("Straight from your Stash server; the same numbers as its Stats page.")
+                Hint(
+                    if (offline) "Offline mode: counted from what's on this phone (downloads and saved lists)."
+                    else "Straight from your Stash server; the same numbers as its Stats page.",
+                )
             }
         }
     }
@@ -481,7 +512,9 @@ fun LibraryStatsPage() {
 // Storage & offline
 // =====================================================================
 
-private data class Usage(val images: Long, val pages: Long, val updates: Long)
+private data class Usage(val images: Long, val library: Long, val downloads: Long, val updates: Long, val free: Long) {
+    val total get() = images + library + downloads + updates
+}
 
 private fun dirSize(f: File): Long = if (!f.exists()) 0L else f.walkTopDown().filter { it.isFile }.sumOf { it.length() }
 
@@ -490,19 +523,27 @@ private fun dirSize(f: File): Long = if (!f.exists()) 0L else f.walkTopDown().fi
 fun StoragePage() {
     val context = LocalContext.current
     val container = context.container
+    val nav = LocalNavigator.current
     val saver = container.offlineSaver
+    val downloads = container.downloads
     val scope = rememberCoroutineScope()
     val s = settingsState()
     val saving by saver.progress.collectAsState()
+    val offline by container.connection.offline.collectAsState()
+    val downloadItems by downloads.items.collectAsState()
+    val libraryVersion by container.library.version.collectAsState()
     val collections = saver.collections(s)
     var usage by remember { mutableStateOf<Usage?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
-    LaunchedEffect(refresh, saving == null) {
+    var confirmClear by remember { mutableStateOf(false) }
+    LaunchedEffect(refresh, saving == null, downloadItems.count { it.done }, libraryVersion) {
         usage = withContext(Dispatchers.IO) {
             Usage(
                 images = SingletonImageLoader.get(context).diskCache?.size ?: 0L,
-                pages = container.responseCache.size(),
+                library = container.library.sizeBytes(),
+                downloads = downloads.totalBytes(),
                 updates = dirSize(File(context.cacheDir, "updates")),
+                free = downloads.freeBytes(),
             )
         }
     }
@@ -513,41 +554,82 @@ fun StoragePage() {
         SettingsCard {
             Column(Modifier.padding(16.dp)) {
                 val u = usage
-                val capacity = s.imageCacheMb.toLong() * 1024 * 1024 + 128L * 1024 * 1024
-                val used = u?.let { it.images + it.pages + it.updates } ?: 0L
+                val scale = u?.let { it.total + it.free } ?: 0L
                 Row(verticalAlignment = Alignment.Bottom) {
-                    Text(if (u == null) "…" else Format.bytes(used), style = MaterialTheme.typography.headlineMedium)
+                    Text(if (u == null) "…" else Format.bytes(u.total), style = MaterialTheme.typography.headlineMedium)
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        "of ${Format.bytes(capacity)} allowed",
+                        if (u == null) "" else "used · ${Format.bytes(u.free)} free",
                         style = MaterialTheme.typography.bodySmall, color = Ink.Muted, modifier = Modifier.padding(bottom = 4.dp),
                     )
                 }
                 Row(
                     Modifier.fillMaxWidth().padding(vertical = 12.dp).height(12.dp).clip(RoundedCornerShape(6.dp)).background(Ink.Surface3),
                 ) {
-                    if (u != null && capacity > 0) {
+                    if (u != null && scale > 0) {
                         var rest = 1f
-                        listOf(u.images to Ink.Amber, u.pages to Ink.Teal, u.updates to Ink.Violet).forEach { (bytes, color) ->
-                            val f = (bytes.toFloat() / capacity).coerceIn(0f, rest)
-                            if (f > 0.001f) {
-                                Box(Modifier.fillMaxHeight().weight(f).background(color))
-                                rest -= f
+                        listOf(u.downloads to Ink.Green, u.images to Ink.Amber, u.library to Ink.Teal, u.updates to Ink.Violet)
+                            .forEach { (bytes, color) ->
+                                // A sliver stays visible even when one part is tiny next to the free space.
+                                val f = (bytes.toFloat() / scale).let { if (bytes > 0) it.coerceAtLeast(0.006f) else 0f }.coerceIn(0f, rest)
+                                if (f > 0.001f) {
+                                    Box(Modifier.fillMaxHeight().weight(f).background(color))
+                                    rest -= f
+                                }
                             }
-                        }
                         if (rest > 0.001f) Spacer(Modifier.weight(rest))
                     }
                 }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Legend(Ink.Green, "Downloads ${u?.let { Format.bytes(it.downloads) } ?: "…"}")
                     Legend(Ink.Amber, "Images ${u?.let { Format.bytes(it.images) } ?: "…"}")
-                    Legend(Ink.Teal, "Pages ${u?.let { Format.bytes(it.pages) } ?: "…"}")
+                    Legend(Ink.Teal, "Offline info ${u?.let { Format.bytes(it.library) } ?: "…"}")
                     Legend(Ink.Violet, "Updates ${u?.let { Format.bytes(it.updates) } ?: "…"}")
                 }
             }
         }
 
+        // ---------- offline mode ----------
+        GroupLabel("Offline mode")
+        SettingsCard {
+            SwitchSetting(
+                "Offline mode",
+                if (offline) "On · only what's saved on this phone is shown, and nothing is sent to the server"
+                else "Use only what's on this phone, as if it were your whole library",
+                offline,
+            ) { v -> if (v) container.goOffline() else container.goOnline() }
+            CardDivider()
+            SwitchSetting(
+                "Switch automatically", "Go offline when your Stash server can't be reached", s.offlineFallback,
+                onReset = { it.copy(offlineFallback = D.offlineFallback) },
+            ) { v -> context.updateSettings { it.copy(offlineFallback = v) } }
+        }
+        Hint(
+            "In offline mode, downloads and saved lists stand in for your server: browsing, search, sorting " +
+                "(random too), filters and stats all work on them. Plays and watch time are sent once you're back online.",
+        )
+
+        // ---------- downloads ----------
+        GroupLabel("Downloads")
+        SettingsCard {
+            val done = downloadItems.count { it.done }
+            val active = downloadItems.count { !it.done && it.status != SceneDownload.FAILED }
+            NavRow(
+                Icons.Filled.DownloadForOffline, Ink.Green, "Downloaded scenes",
+                buildString {
+                    append(if (done == 0) "None yet" else "$done scenes · ${Format.bytes(usage?.downloads ?: 0L)}")
+                    if (active > 0) append(" · $active in progress")
+                },
+            ) { nav.downloads() }
+            CardDivider()
+            SwitchSetting(
+                "Wi-Fi only", "Wait for Wi-Fi before downloading videos", s.downloadWifiOnly,
+                onReset = { it.copy(downloadWifiOnly = D.downloadWifiOnly) },
+            ) { v -> context.updateSettings { it.copy(downloadWifiOnly = v) } }
+        }
+
         // ---------- saved collections ----------
-        GroupLabel("Saved for offline")
+        GroupLabel("Saved lists")
         saving?.let { p ->
             SettingsCard(Modifier.padding(bottom = 8.dp)) {
                 Column(Modifier.padding(14.dp)) {
@@ -574,7 +656,7 @@ fun StoragePage() {
             SettingsCard {
                 Text(
                     "Nothing saved yet. Tap the save-for-offline button next to the sort and filter chips on any list " +
-                        "(Scenes, a performer's scenes, a gallery's images…).",
+                        "(Scenes, a performer's scenes, a gallery's images…). Scene lists can download their videos too.",
                     style = MaterialTheme.typography.bodyMedium, color = Ink.Muted, modifier = Modifier.padding(16.dp),
                 )
             }
@@ -582,20 +664,15 @@ fun StoragePage() {
             SettingsCard {
                 collections.forEachIndexed { i, c ->
                     if (i > 0) CardDivider()
-                    CollectionRow(c, busy = saving != null)
+                    CollectionRow(c, busy = saving != null || offline)
                 }
             }
-            Hint("Removing one only takes it off this list. Its pictures stay cached until space is needed or you clear them below.")
+            Hint("Removing one only takes it off this list; its info stays until you clear it below. Videos stay in Downloads.")
         }
 
         // ---------- behaviour ----------
         GroupLabel("Behaviour")
         SettingsCard {
-            SwitchSetting(
-                "Use saved copies offline", "When your Stash server can't be reached", s.offlineFallback,
-                onReset = { it.copy(offlineFallback = D.offlineFallback) },
-            ) { v -> context.updateSettings { it.copy(offlineFallback = v) } }
-            CardDivider()
             SwitchSetting(
                 "Refresh saved lists daily", "On Wi-Fi while charging", s.offlineAutoRefresh,
                 onReset = { it.copy(offlineAutoRefresh = D.offlineAutoRefresh) },
@@ -605,11 +682,10 @@ fun StoragePage() {
                 "Image cache size",
                 listOf(256 to "256 MB", 512 to "512 MB", 1024 to "1 GB", 2048 to "2 GB", 4096 to "4 GB"),
                 s.imageCacheMb,
-                summary = "Bigger keeps more pictures for offline. Applies the next time the app starts.",
+                summary = "Thumbnails for lists and pages you've browsed. Pictures for downloads and saved info are kept separately and never evicted.",
                 onReset = { it.copy(imageCacheMb = D.imageCacheMb) },
             ) { v -> context.updateSettings { it.copy(imageCacheMb = v) } }
         }
-        Hint("Every list and page you open is also kept (up to 128 MB), so places you've been work offline too.")
 
         Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = {
@@ -621,14 +697,36 @@ fun StoragePage() {
                     refresh++
                 }
             }) { Text("Clear images", maxLines = 1) }
-            OutlinedButton(onClick = {
-                scope.launch {
-                    withContext(Dispatchers.IO) { container.responseCache.clear() }
-                    context.toast("Saved pages cleared")
-                    refresh++
-                }
-            }) { Text("Clear pages", maxLines = 1) }
+            OutlinedButton(onClick = { confirmClear = true }) { Text("Clear saved info", maxLines = 1) }
         }
+    }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Clear saved info?") },
+            text = {
+                Text(
+                    "Saved lists and their offline info are removed. Downloaded scenes stay, with the info " +
+                        "needed to browse them offline.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClear = false
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            container.library.pruneTo(downloadItems.filter { it.done || it.status != SceneDownload.FAILED }.map { it.sceneId }.toSet())
+                        }
+                        container.settingsStore.update { it.copy(offlineCollections = "") }
+                        context.toast("Saved info cleared")
+                        refresh++
+                    }
+                }) { Text("Clear", color = Ink.Red, maxLines = 1) }
+            },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancel", maxLines = 1) } },
+            containerColor = Ink.Raised,
+        )
     }
 }
 
@@ -663,6 +761,7 @@ private fun CollectionRow(c: OfflineCollection, busy: Boolean) {
             Text(
                 "${c.count} ${kind.label.lowercase()}" +
                     (if (kind == EntityKind.IMAGES) if (c.fullImages) " · full images" else " · thumbnails only" else "") +
+                    (if (c.downloadQuality != null) " · with videos" else "") +
                     (if (c.savedAt > 0) " · " + Format.agoMillis(c.savedAt) else ""),
                 style = MaterialTheme.typography.bodySmall, color = Ink.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )

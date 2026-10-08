@@ -73,6 +73,10 @@ data class CardItem(
     /** Images: the item is actually a video clip. */
     val isVideo: Boolean = false,
     val fullImage: String? = null,
+    /** Scenes: the video is downloaded to this phone. */
+    val downloaded: Boolean = false,
+    /** Offline mode: the scene's details are on the phone but its video isn't. */
+    val infoOnly: Boolean = false,
 )
 
 object BrowseSpec {
@@ -173,6 +177,8 @@ object BrowseSpec {
             QuickFilter("rated", "Rated") { putInt("rating100", 0, "GREATER_THAN") },
             QuickFilter("organized", "Organized") { put("organized", true) },
             QuickFilter("unorganized", "Unorganized") { put("organized", false) },
+            // Not a server filter: the repository limits the query to downloaded scene ids.
+            QuickFilter("downloaded", "Downloaded") { },
         )
         EntityKind.PERFORMERS -> listOf(
             QuickFilter("fav", "Favorites") { put("filter_favorites", true) },

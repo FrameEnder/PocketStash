@@ -12,6 +12,7 @@ import kotlinx.serialization.Serializable
 @Serializable object SettingsRoute
 @Serializable object UpdatesRoute
 @Serializable object HomeLayoutRoute
+@Serializable object DownloadsRoute
 
 /** One Settings topic page (settings/<key>), see SettingsSection. */
 @Serializable data class SettingsSectionRoute(val key: String)

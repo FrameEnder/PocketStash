@@ -47,7 +47,8 @@ markers, in one app made for a phone. It works over plain HTTP, so a Tailscale a
 | ✏️ **Editing** | Everything the web UI can edit: scenes, performers, studios, tags, groups, galleries, images, and markers. Search-as-you-type pickers create missing tags, performers, studios, and groups on the fly. Upload covers and images from the phone or a URL. |
 | ➕ **Create & delete** | New performers, studios, tags, groups, and galleries from their lists. Deleting scenes, images, and galleries can also remove the file and generated previews. |
 | 📐 **Any aspect ratio** | Portrait (9:16), 4:3, and ultrawide videos show whole, letterboxed on a dark backdrop instead of cropped. |
-| 📴 **Offline** | Every list and page you open is kept, and any list can be **saved for offline**: its pages, each entry's page, and their pictures. When your server can't be reached, those screens open from saved copies with an "Offline" pill. Saved lists can be refreshed by hand or daily on Wi-Fi while charging. |
+| ⬇️ **Downloads** | Download any scene for offline playback: the original file (resumes if interrupted) or a smaller MP4 from Stash's transcodes. Downloads run in the background with a progress notification, wait for Wi-Fi by default, and get their own screen with sizes, free space, pause and retry. Saved scene lists can download their videos too. |
+| 📴 **Offline mode** | When your server can't be reached (or you switch it on yourself), downloads and saved lists **become the whole library** for that session. Browsing, search, every sort including random, filters, detail pages and stats all run on what's on the phone. Scenes without a video show as info only, editing is put away, and plays and watch time are sent once you're back. A pill tells you when the server is back, with a one-tap **Go online**. |
 | ⬇️ **In-app updates** | Checks GitHub Releases on launch, when you come back after 30 minutes, and every 6 hours. With notifications on, new builds pop up in the app: **Update now**, **Later**, or **Skip this build**. Choose the **Stable** channel (tagged releases, whose notes list every commit since the last one) or **Nightly** (every push). |
 | ⚙️ **Settings** | Searchable, with a live connection card (Stash version and ping) and one page per topic: server, appearance with a live card-size preview, player, library stats, storage & offline with a usage meter, updates, and about. Long-press any setting to reset it. |
 | 🎨 **Themes** | Dark ink theme with 16 accent colors. |
@@ -83,7 +84,8 @@ Stash up to date.
    The key is under **Stash → Settings → Security → API Key**. Leave it blank if authentication is off.
 2. Browse from the bottom bar: **Home**, **Scenes**, **Performers**, **Search**, and **Library**.
 3. Pick a highlight color under **Settings → Appearance**, and lay out Home with the layout button at the top of Home.
-4. To keep a list for offline, tap the save-for-offline button at the end of its sort and filter chips.
+4. To watch without your server, open a scene and tap **Download**. To keep a whole list, tap the save-for-offline button at the end of its sort and filter chips.
+5. Offline mode turns on by itself when the server can't be reached, or switch it on under **Settings → Storage & offline**.
 
 ---
 
@@ -134,7 +136,7 @@ before each update. Keep `pocketstash.jks` backed up; `.gitignore` already exclu
 | **Media** | Coil 3 for images, Media3 ExoPlayer (HLS and DASH) for video, sharing one authenticated OkHttp client. |
 | **Editing** | One form engine renders every entity from a field list that mirrors Stash's `*UpdateInput` types. |
 | **State** | A small app container plus a ViewModel per screen. Settings and the Home layout live in DataStore. Update checks and offline refreshes run in WorkManager. |
-| **Offline** | Stash's GraphQL runs over POST, which HTTP caches never store, so read queries are saved by the app itself ([`ResponseCache.kt`](app/src/main/java/com/frameender/pocketstash/data/ResponseCache.kt)) and served when the server is down. Pictures come from Coil's disk cache. |
+| **Offline** | Offline mode swaps the server for a local library: raw GraphQL results for downloaded and saved items are stored as JSON ([`OfflineLibrary.kt`](app/src/main/java/com/frameender/pocketstash/data/OfflineLibrary.kt)), and [`OfflineQuery.kt`](app/src/main/java/com/frameender/pocketstash/data/OfflineQuery.kt) answers the same queries the server would (search, sorts, filters, counts, stats). Downloads run in a WorkManager foreground worker ([`SceneDownloads.kt`](app/src/main/java/com/frameender/pocketstash/data/SceneDownloads.kt)). |
 
 ```
 app/src/main/java/com/frameender/pocketstash/
@@ -182,7 +184,10 @@ paste a fine-grained token (read-only **Contents** access to this repo) under **
 | A video won't play | The app already falls back through Stash's transcodes. If none work, pick another stream from the player's quality button, or check that ffmpeg works in Stash. |
 | Videos have no sound | Tap the speaker button in the player, or swipe up on the right side. |
 | Saving a performer fails | Update Stash; older versions don't know the `career_start` / `career_end` fields. |
-| "…hasn't been saved for offline" | The server is unreachable and that screen was never opened or saved. Save the list for offline next time you're connected. Videos always need the server. |
+| A scene says "Info only" offline | It was saved with a list but its video wasn't downloaded. Download it, or tick **Also download the videos** when saving a scene list. |
+| Offline mode is missing things | Offline, only downloads and saved lists exist. Tap **Go online** on the pill when the server is back, or turn off **Offline mode** in **Settings → Storage & offline**. |
+| Downloads say "Waiting for Wi-Fi" | **Wi-Fi only** is on (the default). Turn it off on the Downloads screen to use mobile data. |
+| A downloaded MP4 takes a long time | Stash converts MP4 downloads while sending them. The **Original file** option is fastest, and resumes if interrupted. |
 | "No release found" in Updates | The repo is private. Add a GitHub token under **Updates → Source**, or make the repo public. |
 | A new APK won't install over the old one | The builds were signed with different keys. Set up the signing secrets, then uninstall once. |
 

@@ -42,7 +42,7 @@ private val headerSpan: (androidx.compose.foundation.lazy.grid.LazyGridItemSpanS
 fun PerformerDetailScreen(id: String) {
     val repo = LocalContext.current.container.repository
     val nav = LocalNavigator.current
-    val vm = appViewModel("performer:$id") { c -> DetailViewModel { c.repository.performer(id) } }
+    val vm = appViewModel("performer:$id") { c -> DetailViewModel(c.repository.modeChanges) { c.repository.performer(id) } }
     val state by vm.state.collectAsState()
     MutationToasts(vm)
     ReloadOnReturn(vm)
@@ -124,7 +124,7 @@ fun StudioDetailScreen(id: String) {
     val container = LocalContext.current.container
     val repo = container.repository
     val nav = LocalNavigator.current
-    val vm = appViewModel("studio:$id") { c -> DetailViewModel { c.repository.studio(id) } }
+    val vm = appViewModel("studio:$id") { c -> DetailViewModel(c.repository.modeChanges) { c.repository.studio(id) } }
     val state by vm.state.collectAsState()
     MutationToasts(vm)
     ReloadOnReturn(vm)
@@ -199,7 +199,7 @@ fun TagDetailScreen(id: String) {
     val container = LocalContext.current.container
     val repo = container.repository
     val nav = LocalNavigator.current
-    val vm = appViewModel("tag:$id") { c -> DetailViewModel { c.repository.tag(id) } }
+    val vm = appViewModel("tag:$id") { c -> DetailViewModel(c.repository.modeChanges) { c.repository.tag(id) } }
     val state by vm.state.collectAsState()
     MutationToasts(vm)
     ReloadOnReturn(vm)
@@ -267,7 +267,7 @@ fun GroupDetailScreen(id: String) {
     val container = LocalContext.current.container
     val repo = container.repository
     val nav = LocalNavigator.current
-    val vm = appViewModel("group:$id") { c -> DetailViewModel { c.repository.group(id) } }
+    val vm = appViewModel("group:$id") { c -> DetailViewModel(c.repository.modeChanges) { c.repository.group(id) } }
     val state by vm.state.collectAsState()
     MutationToasts(vm)
     ReloadOnReturn(vm)
@@ -323,7 +323,7 @@ fun GalleryDetailScreen(id: String) {
     val container = LocalContext.current.container
     val repo = container.repository
     val nav = LocalNavigator.current
-    val vm = appViewModel("gallery:$id") { c -> DetailViewModel { c.repository.gallery(id) } }
+    val vm = appViewModel("gallery:$id") { c -> DetailViewModel(c.repository.modeChanges) { c.repository.gallery(id) } }
     val state by vm.state.collectAsState()
     MutationToasts(vm)
     ReloadOnReturn(vm)

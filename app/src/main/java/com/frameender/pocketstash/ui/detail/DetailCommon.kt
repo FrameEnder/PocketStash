@@ -27,6 +27,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.LocalContext
+import com.frameender.pocketstash.container
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -54,14 +57,21 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 /** Loads one entity and supports optimistic edits (rating, favorite, O…). */
-class DetailViewModel<T : Any>(private val loader: suspend () -> T) : ViewModel() {
+class DetailViewModel<T : Any>(
+    /** Offline mode switching; the page reloads from the new source. */
+    modeChanges: kotlinx.coroutines.flow.Flow<Boolean>? = null,
+    private val loader: suspend () -> T,
+) : ViewModel() {
     private val _state = MutableStateFlow<Load<T>>(Load.Loading)
     val state: StateFlow<Load<T>> = _state
 
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message
 
-    init { reload() }
+    init {
+        reload()
+        modeChanges?.let { f -> viewModelScope.launch { f.collect { reload() } } }
+    }
 
     fun reload() {
         viewModelScope.launch {
@@ -104,6 +114,8 @@ fun DetailScaffold(
     content: @Composable BoxScope.() -> Unit,
 ) {
     val nav = LocalNavigator.current
+    // Editing needs the server, so the pencil hides in offline mode.
+    val offline by LocalContext.current.container.connection.offline.collectAsState()
     Scaffold(
         containerColor = Ink.Bg,
         topBar = {
@@ -112,7 +124,7 @@ fun DetailScaffold(
                 navigationIcon = { IconButton(onClick = { nav.back() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
                     actions()
-                    if (onEdit != null) IconButton(onClick = onEdit) { Icon(Icons.Outlined.Edit, "Edit") }
+                    if (onEdit != null && !offline) IconButton(onClick = onEdit) { Icon(Icons.Outlined.Edit, "Edit") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Ink.Bg),
             )

@@ -1,8 +1,9 @@
 package com.frameender.pocketstash.data
 
-import android.os.SystemClock
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -24,7 +25,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-class StashException(message: String, cause: Throwable? = null) : Exception(message, cause)
+open class StashException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+/** The server didn't answer at all (no network, Tailscale off, server down). */
+class ServerUnreachableException(message: String, cause: Throwable? = null) : StashException(message, cause)
+
+/** Something needed the server while the app is in offline mode. */
+class OfflineModeException : StashException("You're in offline mode, so this needs your Stash server. Tap “Go online” when it's reachable.")
 
 val StashJson = Json {
     ignoreUnknownKeys = true
@@ -42,8 +49,37 @@ class Connection {
     @Volatile
     var settings: AppSettings = AppSettings()
 
-    /** True while the server can't be reached and screens are showing saved copies. */
+    /**
+     * Offline mode: every screen reads from the phone (downloads and saved lists) instead of
+     * the server, until [leaveOffline]. Entered automatically when the server can't be reached
+     * (if allowed in Settings) or by hand.
+     */
     val offline = MutableStateFlow(false)
+
+    /** Offline mode was switched on by hand (not because the server vanished). */
+    @Volatile var manualOffline = false
+        private set
+
+    /** While offline: the server answered the last check, so going online would work. */
+    val serverBack = MutableStateFlow(false)
+
+    /** Emits each time offline mode turns on or off (not the current state). */
+    val modeChanges: Flow<Boolean> = offline.drop(1)
+
+    /** Offline mode: maps a picture URL to a file saved on the phone. */
+    @Volatile var localMedia: ((String) -> String?)? = null
+
+    fun enterOffline(manual: Boolean) {
+        manualOffline = manual
+        serverBack.value = false
+        offline.value = true
+    }
+
+    fun leaveOffline() {
+        manualOffline = false
+        serverBack.value = false
+        offline.value = false
+    }
 
     val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -63,6 +99,7 @@ class Connection {
     /** Turns a URL Stash returned into one this device can reach. */
     fun media(raw: String?): String? {
         if (raw.isNullOrBlank()) return null
+        if (offline.value) localMedia?.invoke(raw)?.let { return it }
         val s = settings
         val base = s.baseUrl ?: return raw
         val parsed = raw.toHttpUrlOrNull() ?: return base.resolve(raw)?.toString() ?: raw
@@ -76,17 +113,20 @@ class Connection {
     }
 }
 
-class StashClient(private val connection: Connection, private val cache: ResponseCache? = null) {
+class StashClient(private val connection: Connection) {
     private val jsonType = "application/json; charset=utf-8".toMediaType()
 
-    /** When the server last failed to answer (elapsed-realtime ms); 0 = it's been fine. */
-    @Volatile private var lastFailureAt = 0L
-
+    /**
+     * Runs a GraphQL document. [override] targets another server/key (connection tests);
+     * [evenOffline] lets the reconnect check through while offline mode is on.
+     */
     suspend fun execute(
         query: String,
         variables: JsonObject = JsonObject(emptyMap()),
         override: Pair<HttpUrl, String>? = null,
+        evenOffline: Boolean = false,
     ): JsonObject = withContext(Dispatchers.IO) {
+        if (override == null && !evenOffline && connection.offline.value) throw OfflineModeException()
         val (base, apiKey) = override ?: run {
             val s = connection.settings
             (s.baseUrl ?: throw StashException("No Stash server configured")) to s.apiKey
@@ -102,43 +142,11 @@ class StashClient(private val connection: Connection, private val cache: Respons
         // may target a different host, so set the header explicitly.
         if (apiKey.isNotEmpty()) builder.header("ApiKey", apiKey)
 
-        // Only plain reads against the configured server are saved / served offline.
-        val isRead = override == null && query.trimStart().startsWith("query")
-        val cacheKey = if (isRead && cache != null) cache.key(base.toString(), apiKey, query, variables.toString()) else null
-        val offlineOk = cacheKey != null && connection.settings.offlineFallback
-
-        // The server just failed: use saved copies right away instead of waiting out another
-        // connection timeout per request. The network is tried again every 30 seconds.
-        val now = SystemClock.elapsedRealtime()
-        val recentlyDown = lastFailureAt != 0L && now - lastFailureAt < 30_000
-        if (offlineOk && recentlyDown) {
-            cache!!.get(cacheKey!!)?.let { saved ->
-                connection.offline.value = true
-                return@withContext parse(saved, 200)
-            }
-        }
-
         val response = try {
             connection.http.newCall(builder.build()).execute()
         } catch (e: IOException) {
-            if (override == null) lastFailureAt = SystemClock.elapsedRealtime()
-            // Server unreachable: fall back to the last saved copy of this exact request.
-            if (offlineOk) {
-                cache!!.get(cacheKey!!)?.let { saved ->
-                    connection.offline.value = true
-                    return@withContext parse(saved, 200)
-                }
-                throw StashException(
-                    "Can't reach ${base.host}:${base.port}, and this page hasn't been saved for offline " +
-                        "(${e.message ?: e.javaClass.simpleName})",
-                    e,
-                )
-            }
-            throw StashException("Can't reach ${base.host}:${base.port} — ${e.message ?: e.javaClass.simpleName}", e)
-        }
-        if (override == null) {
-            lastFailureAt = 0L
-            connection.offline.value = false
+            val msg = "Can't reach ${base.host}:${base.port} — ${e.message ?: e.javaClass.simpleName}"
+            throw if (override == null) ServerUnreachableException(msg, e) else StashException(msg, e)
         }
 
         response.use { r ->
@@ -149,12 +157,12 @@ class StashClient(private val connection: Connection, private val cache: Respons
                 !r.isSuccessful && text.isBlank() ->
                     throw StashException("HTTP ${r.code} from Stash")
             }
-            val data = parse(text, r.code)
-            // Saved only once Stash answered without errors.
-            if (cacheKey != null && r.isSuccessful) cache!!.put(cacheKey, text)
-            data
+            parse(text, r.code)
         }
     }
+
+    /** True if the configured server answers right now (used while offline). */
+    suspend fun ping(): Boolean = runCatching { execute(Q.serverInfo, evenOffline = true) }.isSuccess
 
     private fun parse(text: String, code: Int): JsonObject {
         val root: JsonObject = try {
