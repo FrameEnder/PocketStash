@@ -10,6 +10,8 @@
     <!-- Scene downloads run in a foreground service (WorkManager) so they continue in the background. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- App lock: ask Android's fingerprint / screen-lock prompt (the app only learns yes or no). -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
     <application
         android:name=".PocketStashApp"

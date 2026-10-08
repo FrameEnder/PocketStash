@@ -151,7 +151,10 @@ class AppLock(private val app: Application) : Application.ActivityLifecycleCallb
         if (!deviceSecure()) return BiometricStatus(false, "Set a screen lock on your phone first")
         if (Build.VERSION.SDK_INT >= 30) {
             val bm = app.getSystemService(BiometricManager::class.java)
-            return when (bm?.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
+            // Never let a system quirk take the settings page down: fall back to "available".
+            val result = runCatching { bm?.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) }.getOrNull()
+                ?: return BiometricStatus(true, null)
+            return when (result) {
                 BiometricManager.BIOMETRIC_SUCCESS -> BiometricStatus(true, null)
                 BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED ->
                     BiometricStatus(true, "No fingerprint enrolled yet, so your phone's screen lock is asked instead")
