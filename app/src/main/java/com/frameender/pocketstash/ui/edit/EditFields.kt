@@ -1,5 +1,6 @@
 package com.frameender.pocketstash.ui.edit
 
+import com.frameender.pocketstash.security.appLock
 import android.net.Uri
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -518,7 +519,11 @@ private fun ImageEditor(field: FieldSpec, value: FormValue.Image, onChange: (For
             }
             Spacer(Modifier.width(12.dp))
             Column {
-                OutlinedButton(onClick = { picker.launch("image/*") }) {
+                OutlinedButton(onClick = {
+                    // Picking a file isn't leaving the app: don't ask for the lock on the way back.
+                    context.appLock.expectReturn()
+                    picker.launch("image/*")
+                }) {
                     Icon(Icons.Outlined.Image, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("From device")
                 }
                 OutlinedButton(onClick = { urlMode = !urlMode }) {

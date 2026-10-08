@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import com.frameender.pocketstash.security.AppLockGate
 import com.frameender.pocketstash.ui.nav.AppNav
 import com.frameender.pocketstash.ui.theme.Ink
 import com.frameender.pocketstash.ui.theme.PocketStashTheme
@@ -35,12 +36,14 @@ class MainActivity : ComponentActivity() {
         setContent {
             PocketStashTheme {
                 val settings by app.settings.collectAsState()
-                Box(Modifier.fillMaxSize().background(Ink.Bg)) {
-                    val s = settings
-                    if (s != null) {
-                        // Decide the start screen once, from the first settings read.
-                        val configured = remember { s.isConfigured }
-                        key(configured) { AppNav(configured) }
+                AppLockGate {
+                    Box(Modifier.fillMaxSize().background(Ink.Bg)) {
+                        val s = settings
+                        if (s != null) {
+                            // Decide the start screen once, from the first settings read.
+                            val configured = remember { s.isConfigured }
+                            key(configured) { AppNav(configured) }
+                        }
                     }
                 }
             }

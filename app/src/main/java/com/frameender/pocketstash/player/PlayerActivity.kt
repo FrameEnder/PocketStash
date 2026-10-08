@@ -39,6 +39,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -74,6 +76,8 @@ import com.frameender.pocketstash.data.model.Marker
 import com.frameender.pocketstash.data.model.StreamEndpoint
 import com.frameender.pocketstash.ui.theme.Ink
 import com.frameender.pocketstash.ui.theme.PocketStashTheme
+import com.frameender.pocketstash.security.AppLockGate
+import com.frameender.pocketstash.security.appLock
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
@@ -148,7 +152,10 @@ class PlayerActivity : ComponentActivity() {
 
         setContent {
             PocketStashTheme {
-                PlayerScreen()
+                // Locked (e.g. back from the background): stop playback until it's unlocked.
+                val locked by appLock.locked.collectAsState()
+                LaunchedEffect(locked) { if (locked) player.pause() }
+                AppLockGate { PlayerScreen() }
             }
         }
 

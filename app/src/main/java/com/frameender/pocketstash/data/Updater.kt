@@ -1,5 +1,6 @@
 package com.frameender.pocketstash.data
 
+import com.frameender.pocketstash.security.appLock
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -190,6 +191,8 @@ class Updater(
     fun openInstallPermission(activityContext: Context) {
         val i = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // A quick trip to Android's settings and back: don't ask for the app lock on return.
+        activityContext.appLock.expectReturn()
         activityContext.startActivity(i)
     }
 

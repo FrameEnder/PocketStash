@@ -27,6 +27,9 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
+import com.frameender.pocketstash.security.LockPolicy
+import com.frameender.pocketstash.security.appLock
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Search
@@ -77,6 +80,7 @@ enum class SettingsSection(val key: String, val title: String, val icon: ImageVe
     PLAYER("player", "Player", Icons.Filled.PlayCircle, Color(0xFF8BC37A)),
     LIBRARY("library", "Library stats", Icons.Filled.BarChart, Color(0xFFB394E8)),
     STORAGE("storage", "Storage & offline", Icons.Filled.CloudOff, Color(0xFF7DB8B5)),
+    SECURITY("security", "Privacy & security", Icons.Filled.Lock, Color(0xFFE5534B)),
     UPDATES("updates", "Updates", Icons.Filled.SystemUpdate, Color(0xFFE6C15A)),
     ABOUT("about", "About", Icons.Filled.Info, Color(0xFF9A958C));
 
@@ -110,6 +114,11 @@ private val SEARCH_INDEX = listOf(
     SettingEntry("Refresh saved lists daily", SettingsSection.STORAGE, "offline background wifi charging"),
     SettingEntry("Image cache size", SettingsSection.STORAGE, "storage space disk thumbnails"),
     SettingEntry("Clear cache", SettingsSection.STORAGE, "storage space free delete clear saved info images"),
+    SettingEntry("App lock", SettingsSection.SECURITY, "lock passcode pin password fingerprint biometric face unlock privacy"),
+    SettingEntry("Change passcode", SettingsSection.SECURITY, "pin password code lock"),
+    SettingEntry("Lock after leaving", SettingsSection.SECURITY, "timeout background lock delay"),
+    SettingEntry("Hide preview in recent apps", SettingsSection.SECURITY, "recents recent apps overview multitask switcher thumbnail preview blank privacy"),
+    SettingEntry("Block screenshots", SettingsSection.SECURITY, "screenshot recording secure privacy"),
     SettingEntry("Update channel", SettingsSection.UPDATES, "stable nightly release version"),
     SettingEntry("Update notifications", SettingsSection.UPDATES, "notify pop-up background check"),
     SettingEntry("GitHub token", SettingsSection.UPDATES, "private repo"),
@@ -121,6 +130,7 @@ private fun mb(n: Int) = if (n >= 1024) "${n / 1024} GB" else "$n MB"
 /** Live summary shown under each category on the main page. */
 private fun summary(
     section: SettingsSection, s: AppSettings, saved: Int, downloaded: Int, offline: Boolean, version: String, build: Long,
+    security: String = "",
 ): String = when (section) {
     SettingsSection.SERVER -> s.baseUrl?.let { it.host + ":" + it.port } ?: "Not set up"
     SettingsSection.APPEARANCE ->
@@ -143,12 +153,14 @@ private fun summary(
     SettingsSection.UPDATES ->
         s.updateChannel.replaceFirstChar { it.uppercase() } + " channel · " + if (s.autoUpdateCheck) "checks every 6 h" else "manual checks"
     SettingsSection.ABOUT -> "PocketStash $version · build $build"
+    SettingsSection.SECURITY -> security
 }
 
 private val GROUPS = listOf(
     "Look & feel" to listOf(SettingsSection.APPEARANCE, SettingsSection.HOME),
     "Watching" to listOf(SettingsSection.PLAYER),
     "Data" to listOf(SettingsSection.LIBRARY, SettingsSection.STORAGE),
+    "Privacy" to listOf(SettingsSection.SECURITY),
     "App" to listOf(SettingsSection.UPDATES, SettingsSection.ABOUT),
 )
 
@@ -172,6 +184,16 @@ fun SettingsScreen() {
     val downloadItems by container.downloads.items.collectAsState()
     val downloaded = downloadItems.count { it.done }
     val offlineNow by container.connection.offline.collectAsState()
+    val lockMethod by context.appLock.method.collectAsState()
+    val recentsHidden by context.appLock.hideRecents.collectAsState()
+    val security = listOf(
+        when (lockMethod) {
+            LockPolicy.METHOD_PIN -> "Passcode lock"
+            LockPolicy.METHOD_BIOMETRIC -> "Fingerprint lock"
+            else -> "No app lock"
+        },
+        if (recentsHidden) "preview hidden in recents" else "preview shown in recents",
+    ).joinToString(" · ")
 
     fun open(section: SettingsSection) {
         when (section) {
@@ -251,7 +273,7 @@ fun SettingsScreen() {
                                 icon = section.icon,
                                 tint = section.tint,
                                 title = section.title,
-                                summary = summary(section, s, saved, downloaded, offlineNow, version, build),
+                                summary = summary(section, s, saved, downloaded, offlineNow, version, build, security),
                                 badge = if (section == SettingsSection.UPDATES && update != null) "NEW" else null,
                             ) { open(section) }
                         }
@@ -358,6 +380,7 @@ fun SettingsSectionScreen(key: String?, onDisconnected: () -> Unit) {
         SettingsSection.PLAYER -> PlayerPage()
         SettingsSection.LIBRARY -> LibraryStatsPage()
         SettingsSection.STORAGE -> StoragePage()
+        SettingsSection.SECURITY -> SecurityPage()
         SettingsSection.ABOUT -> AboutPage()
         else -> LaunchedEffect(Unit) { nav.back() }
     }

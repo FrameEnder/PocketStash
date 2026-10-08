@@ -1,5 +1,6 @@
 package com.frameender.pocketstash
 
+import com.frameender.pocketstash.security.AppLock
 import android.app.Application
 import android.content.Context
 import coil3.ImageLoader
@@ -136,8 +137,14 @@ class PocketStashApp : Application(), SingletonImageLoader.Factory {
     lateinit var container: AppContainer
         private set
 
+    /** App lock and app-drawer hiding (Privacy & security). */
+    lateinit var appLock: AppLock
+        private set
+
     override fun onCreate() {
         super.onCreate()
+        // First, so the lock is in place before any screen can show.
+        appLock = AppLock(this)
         container = AppContainer(this)
     }
 
