@@ -1,5 +1,6 @@
 package com.frameender.pocketstash.ui.settings
 
+import com.frameender.pocketstash.security.appLock
 import android.widget.Toast
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -60,6 +61,8 @@ fun UpdatePopup(suppressed: Boolean, onDetails: () -> Unit) {
     val settings by container.settings.collectAsState()
     val available by updater.available.collectAsState()
     val dismissed by updater.popupDismissed.collectAsState()
+    // Never over the lock screen: it waits until the passcode or fingerprint has been given.
+    val locked by context.appLock.locked.collectAsState()
     val s = settings ?: return
     val info = available ?: return
     val scope = rememberCoroutineScope()
@@ -68,7 +71,7 @@ fun UpdatePopup(suppressed: Boolean, onDetails: () -> Unit) {
         info.versionCode != dismissed &&
         info.versionCode != s.skippedUpdate &&
         info.versionCode > updater.installedVersionCode()
-    if (!wanted || suppressed) return
+    if (!wanted || suppressed || locked) return
 
     UpdateDialog(
         info = info,

@@ -59,6 +59,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.frameender.pocketstash.ui.theme.Ink
@@ -83,12 +85,31 @@ fun Context.findActivity(): Activity? {
  */
 @Composable
 fun AppLockGate(content: @Composable () -> Unit) {
-    val lock = LocalContext.current.appLock
+    val context = LocalContext.current
+    val lock = context.appLock
     val locked by lock.locked.collectAsState()
     Box(Modifier.fillMaxSize()) {
         // Hidden from screen readers too while locked.
         Box(if (locked) Modifier.fillMaxSize().clearAndSetSemantics { } else Modifier.fillMaxSize()) { content() }
-        if (locked) LockScreen()
+        if (locked) {
+            // A plain cover in the screen itself too, so nothing shows around the window below
+            // (status bar area, the moment before it appears).
+            Box(
+                Modifier.fillMaxSize().background(Ink.Bg)
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { },
+            )
+            // Its own full-screen window, so it also covers any dialog that was open when the
+            // app was left (a plain overlay would sit underneath dialog windows).
+            Dialog(
+                onDismissRequest = { context.findActivity()?.moveTaskToBack(true) },
+                properties = DialogProperties(
+                    dismissOnBackPress = true, // handled above: Back leaves the app
+                    dismissOnClickOutside = false,
+                    usePlatformDefaultWidth = false,
+                    decorFitsSystemWindows = false,
+                ),
+            ) { LockScreen() }
+        }
     }
 }
 
