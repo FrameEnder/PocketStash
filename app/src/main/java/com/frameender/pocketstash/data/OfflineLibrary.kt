@@ -12,6 +12,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -139,7 +140,7 @@ class OfflineLibrary(context: Context, private val scope: CoroutineScope) {
     fun put(kind: EntityKind, obj: JsonObject) {
         val map = maps[kind] ?: return
         val id = obj.id() ?: return
-        map[id] = map[id]?.let { JsonObject(it + obj) } ?: obj
+        map[id] = map[id]?.let { merge(it, obj) } ?: obj
         changed(kind.name)
     }
 
@@ -337,4 +338,30 @@ class OfflineLibrary(context: Context, private val scope: CoroutineScope) {
         /** JSON fields that hold picture URLs. */
         val IMAGE_FIELDS = setOf("screenshot", "image_path", "front_image_path", "back_image_path", "cover", "thumbnail")
     }
+}
+
+/**
+ * Combines a stored record with a newer copy. New values win, but a list card never thins out a
+ * detailed record: nested objects merge field by field, and lists of linked entities (performers,
+ * tags, galleries…) keep the extra fields of entries that are still linked.
+ */
+internal fun merge(old: JsonObject, new: JsonObject): JsonObject {
+    val out = LinkedHashMap<String, JsonElement>(old)
+    for ((k, v) in new) {
+        val prev = old[k]
+        out[k] = when {
+            prev is JsonObject && v is JsonObject && prev["id"] == v["id"] -> merge(prev, v)
+            prev is JsonArray && v is JsonArray -> {
+                val byId = prev.mapNotNull { e -> (e as? JsonObject)?.let { o -> o["id"]?.let { it to o } } }.toMap()
+                if (byId.isEmpty()) v
+                else JsonArray(v.map { e ->
+                    val o = e as? JsonObject
+                    val match = o?.get("id")?.let { byId[it] }
+                    if (o != null && match != null) merge(match, o) else e
+                })
+            }
+            else -> v
+        }
+    }
+    return JsonObject(out)
 }

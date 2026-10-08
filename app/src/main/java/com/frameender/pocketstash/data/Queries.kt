@@ -39,6 +39,8 @@ fragment GalleryCard on Gallery {
   files { path }
   folder { path }
   studio { id name }
+  performers { id name }
+  tags { id name }
 }"""
 
     val IMAGE_CARD = """
@@ -50,6 +52,10 @@ fragment ImageCard on Image {
     ... on ImageFile { path width height }
     ... on VideoFile { path width height }
   }
+  galleries { id title }
+  studio { id name }
+  performers { id name }
+  tags { id name }
 }"""
 
     val GROUP_CARD = """

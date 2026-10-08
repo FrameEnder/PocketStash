@@ -217,9 +217,21 @@ class OfflineSaver(
                     storeScoped(k, page.items, s)
                 }
             }
-            suspend fun detail(k: EntityKind, id: String) {
-                runCatching { library.put(k, repo.rawDetail(k, id)) }
+            // Everything the saved entries link to, so their links still open offline.
+            val refs = LinkedHashMap<EntityKind, LinkedHashSet<String>>()
+            fun ref(k: EntityKind, id: String?) { if (!id.isNullOrBlank()) refs.getOrPut(k) { LinkedHashSet() }.add(id) }
+            fun collectRefs(o: JsonObject) = with(OfflineQuery) {
+                o.a("performers").forEach { ref(EntityKind.PERFORMERS, it.s("id")) }
+                ref(EntityKind.STUDIOS, o.o("studio")?.s("id"))
+                o.a("tags").forEach { ref(EntityKind.TAGS, it.s("id")) }
+                o.a("galleries").forEach { ref(EntityKind.GALLERIES, it.s("id")) }
+                o.a("groups").forEach { ref(EntityKind.GROUPS, it.o("group")?.s("id")) }
             }
+            suspend fun detail(k: EntityKind, id: String): JsonObject? =
+                runCatching { repo.rawDetail(k, id) }.getOrNull()?.also { o ->
+                    library.put(k, o)
+                    collectRefs(o)
+                }
 
             val sceneIds = LinkedHashSet<String>()
             todo.forEachIndexed { i, item ->
@@ -242,6 +254,33 @@ class OfflineSaver(
                 val card = runCatching { repo.cardFor(kind, item) }.getOrNull()
                 fetch(card?.image)
                 if (c.fullImages && kind == EntityKind.IMAGES && card?.isVideo == false) fetch(card?.fullImage)
+            }
+            library.markListScenes(sceneIds)
+
+            // The list's owner (the gallery whose images these are, the performer whose scenes…),
+            // then what everything links to. Galleries first: theirs links get collected too.
+            val owner: Pair<EntityKind, String>? = when (val sc = c.scope) {
+                is Scope.Performer -> EntityKind.PERFORMERS to sc.id
+                is Scope.Studio -> EntityKind.STUDIOS to sc.id
+                is Scope.Tag -> EntityKind.TAGS to sc.id
+                is Scope.Gallery -> EntityKind.GALLERIES to sc.id
+                is Scope.Group -> EntityKind.GROUPS to sc.id
+                is Scope.Scene -> EntityKind.SCENES to sc.id
+                Scope.None -> null
+            }
+            owner?.let { (k, id) -> ref(k, id) }
+            for (k in listOf(EntityKind.SCENES, EntityKind.GALLERIES, EntityKind.GROUPS, EntityKind.PERFORMERS, EntityKind.STUDIOS, EntityKind.TAGS)) {
+                val ids = refs[k]?.toList().orEmpty()
+                ids.forEachIndexed { i, id ->
+                    currentCoroutineContext().ensureActive()
+                    val isOwner = owner == (k to id)
+                    // Already on the phone: leave it, except the owner, which is refreshed.
+                    if (!isOwner && library.has(k, id)) return@forEachIndexed
+                    progress.value = Progress("${c.label} · linked ${k.label.lowercase()}", i, ids.size)
+                    val o = detail(k, id) ?: return@forEachIndexed
+                    runCatching { repo.cardFor(k, o) }.getOrNull()?.let { fetch(it.image) }
+                    if (k == EntityKind.SCENES) sceneIds += id
+                }
             }
             library.markListScenes(sceneIds)
 
