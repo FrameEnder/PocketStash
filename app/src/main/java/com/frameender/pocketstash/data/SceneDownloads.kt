@@ -261,7 +261,7 @@ class SceneDownloads(
         deleteFiles(d)
         _items.value = _items.value.filterNot { it.sceneId == sceneId }
         persist()
-        library.removeSceneUnlessListed(sceneId)
+        library.releaseDownload(sceneId)
     }
 
     private fun deleteFiles(d: SceneDownload) {
@@ -273,7 +273,7 @@ class SceneDownloads(
         val gone = _items.value
         gone.forEach { cancelled.add(it.sceneId); deleteFiles(it) }
         _items.value = emptyList()
-        gone.forEach { library.removeSceneUnlessListed(it.sceneId) }
+        gone.forEach { library.releaseDownload(it.sceneId) }
         persist()
         WorkManager.getInstance(context).cancelUniqueWork(WORK)
     }
@@ -308,7 +308,9 @@ class SceneDownloads(
     suspend fun captureMetadata(sceneId: String) {
         if (connection.offline.value) return
         val scene = repo.rawDetail(EntityKind.SCENES, sceneId)
-        library.put(EntityKind.SCENES, scene)
+        // Owned by this download: deleting it removes whatever nothing else needs.
+        val owner = "dl:$sceneId"
+        library.put(EntityKind.SCENES, scene, owner)
         val http = connection.http
         val resolve = { raw: String -> connection.media(raw) }
         with(OfflineQuery) {
@@ -318,7 +320,7 @@ class SceneDownloads(
                 if (id == null) return
                 runCatching {
                     val o = repo.rawDetail(kind, id)
-                    library.put(kind, o)
+                    library.put(kind, o, owner)
                     library.saveImage(o.s(imageField), http, resolve)
                 }
             }

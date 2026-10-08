@@ -66,6 +66,13 @@ class OfflineLibrary(context: Context, private val scope: CoroutineScope) {
     /** Scenes stored by a saved list (so deleting their download keeps their info). */
     private val listScenes = ConcurrentHashMap.newKeySet<String>()
 
+    /**
+     * Who keeps each entity ("SCENES:12" → {"list:…", "dl:12"}): a saved list or a download.
+     * When the last owner lets go, the entity is removed. Entities saved before owners were
+     * tracked have no entry here and are only removed by "Clear saved info".
+     */
+    private val owners = ConcurrentHashMap<String, MutableSet<String>>()
+
     private val pending = ArrayList<PendingActivity>()
 
     private val writeLock = Mutex()
@@ -79,6 +86,11 @@ class OfflineLibrary(context: Context, private val scope: CoroutineScope) {
         storedKinds.forEach { kind -> load(file(kind))?.forEach { (id, el) -> (el as? JsonObject)?.let { maps[kind]!![id] = it } } }
         load(File(dir, "media.json"))?.forEach { (k, v) -> (v as? JsonPrimitive)?.contentOrNull?.let { media[k] = it } }
         load(File(dir, "lists.json"))?.keys?.let { listScenes.addAll(it) }
+        load(File(dir, "owners.json"))?.forEach { (k, v) ->
+            val set = ConcurrentHashMap.newKeySet<String>()
+            (v as? JsonArray)?.forEach { e -> (e as? JsonPrimitive)?.contentOrNull?.let { set += it } }
+            if (set.isNotEmpty()) owners[k] = set
+        }
         runCatching {
             val f = File(dir, "pending.json")
             if (f.exists()) pending += StashJson.decodeFromString(ListSerializer(PendingActivity.serializer()), f.readText())
@@ -120,6 +132,10 @@ class OfflineLibrary(context: Context, private val scope: CoroutineScope) {
                 when (name) {
                     "media" -> writeAtomically(File(dir, "media.json"), JsonObject(media.mapValues { JsonPrimitive(it.value) }).toString())
                     "lists" -> writeAtomically(File(dir, "lists.json"), JsonObject(listScenes.associateWith { JsonPrimitive(true) }).toString())
+                    "owners" -> writeAtomically(
+                        File(dir, "owners.json"),
+                        JsonObject(owners.mapValues { (_, v) -> JsonArray(v.toList().map { JsonPrimitive(it) }) }).toString(),
+                    )
                     "pending" -> writeAtomically(
                         File(dir, "pending.json"),
                         StashJson.encodeToString(ListSerializer(PendingActivity.serializer()), synchronized(pending) { pending.toList() }),
@@ -136,13 +152,70 @@ class OfflineLibrary(context: Context, private val scope: CoroutineScope) {
 
     private fun JsonObject.id(): String? = (this["id"] as? JsonPrimitive)?.contentOrNull
 
-    /** Stores an entity, merging into what's already there (newer fields win). */
-    fun put(kind: EntityKind, obj: JsonObject) {
+    private fun key(kind: EntityKind, id: String) = kind.name + ":" + id
+
+    /**
+     * Stores an entity, merging into what's already there (newer fields win). [owner] is the
+     * saved list ("list:<key>") or download ("dl:<sceneId>") keeping it; see [release].
+     */
+    fun put(kind: EntityKind, obj: JsonObject, owner: String? = null) {
         val map = maps[kind] ?: return
         val id = obj.id() ?: return
         map[id] = map[id]?.let { merge(it, obj) } ?: obj
-        changed(kind.name)
+        if (owner != null && owners.getOrPut(key(kind, id)) { ConcurrentHashMap.newKeySet() }.add(owner)) {
+            changed(kind.name, "owners")
+        } else {
+            changed(kind.name)
+        }
     }
+
+    /** Marks an already stored entity as also kept by [owner]. */
+    fun claim(kind: EntityKind, id: String, owner: String) {
+        if (!has(kind, id)) return
+        if (owners.getOrPut(key(kind, id)) { ConcurrentHashMap.newKeySet() }.add(owner)) changed("owners")
+    }
+
+    /**
+     * [owner] now keeps only [keep] (entity keys from [entityKey]); everything else it held is let
+     * go, and whatever nothing keeps any more is deleted with its pictures. With an empty [keep]
+     * the owner lets go of everything (removing a saved list, deleting a download).
+     */
+    fun retain(owner: String, keep: Set<String> = emptySet()): Int {
+        var removed = 0
+        val touched = HashSet<String>()
+        for ((k, set) in owners) {
+            if (k in keep || owner !in set) continue
+            set.remove(owner)
+            touched += k
+            if (set.isEmpty()) {
+                owners.remove(k)
+                val kind = runCatching { EntityKind.valueOf(k.substringBefore(':')) }.getOrNull() ?: continue
+                val id = k.substringAfter(':')
+                if (maps[kind]?.remove(id) != null) {
+                    removed++
+                    changed(kind.name)
+                    if (kind == EntityKind.SCENES) listScenes.remove(id)
+                }
+            }
+        }
+        // A scene no saved list keeps any more is only there for its download.
+        if (owner.startsWith("list:")) {
+            for (k in touched) {
+                if (!k.startsWith("SCENES:")) continue
+                val left = owners[k] ?: continue
+                if (left.none { it.startsWith("list:") }) listScenes.remove(k.substringAfter(':'))
+            }
+        }
+        if (touched.isNotEmpty()) changed("owners", "lists")
+        if (removed > 0) dropUnusedMedia()
+        return removed
+    }
+
+    /** Lets go of everything [owner] kept. */
+    fun release(owner: String): Int = retain(owner, emptySet())
+
+    /** The key [retain] expects. */
+    fun entityKey(kind: EntityKind, id: String) = key(kind, id)
 
     /** Replaces an entity only if it's already stored (keeps the phone's copy fresh while online). */
     fun refreshIfStored(kind: EntityKind, obj: JsonObject) {
@@ -157,9 +230,11 @@ class OfflineLibrary(context: Context, private val scope: CoroutineScope) {
         if (listScenes.addAll(ids)) changed("lists")
     }
 
-    /** Forgets a scene that was only kept for its download. */
-    fun removeSceneUnlessListed(id: String) {
-        if (id in listScenes) return
+    /** Forgets what a download kept (the scene and its linked info), unless something else still needs it. */
+    fun releaseDownload(id: String) {
+        release("dl:$id")
+        // Saved before owners were tracked: the old rule (keep it if a saved list has it).
+        if (owners.containsKey(key(EntityKind.SCENES, id)) || id in listScenes) return
         if (maps[EntityKind.SCENES]!!.remove(id) != null) changed(EntityKind.SCENES.name)
     }
 
@@ -303,8 +378,19 @@ class OfflineLibrary(context: Context, private val scope: CoroutineScope) {
         maps[EntityKind.GALLERIES]!!.clear()
         maps[EntityKind.IMAGES]!!.clear()
         listScenes.clear()
+        // Only downloads own things now.
+        owners.entries.removeIf { (k, set) ->
+            set.removeIf { it.startsWith("list:") }
+            val kind = runCatching { EntityKind.valueOf(k.substringBefore(':')) }.getOrNull()
+            set.isEmpty() || kind == null || maps[kind]?.containsKey(k.substringAfter(':')) != true
+        }
+        dropUnusedMedia()
+        storedKinds.forEach { changed(it.name) }
+        changed("lists", "owners")
+    }
 
-        // Pictures still referenced by what's left.
+    /** Deletes saved pictures nothing stored refers to any more. */
+    private fun dropUnusedMedia() {
         val wanted = HashSet<String>()
         fun collect(el: JsonElement?) {
             when (el) {
@@ -318,9 +404,7 @@ class OfflineLibrary(context: Context, private val scope: CoroutineScope) {
         maps.values.forEach { m -> m.values.forEach { collect(it) } }
         val drop = media.keys.filter { it !in wanted }
         drop.forEach { k -> media.remove(k)?.let { File(mediaDir, it).delete() } }
-
-        storedKinds.forEach { changed(it.name) }
-        changed("media", "lists")
+        if (drop.isNotEmpty()) changed("media")
     }
 
     /** Forgets everything (used when disconnecting from the server). */
@@ -328,10 +412,11 @@ class OfflineLibrary(context: Context, private val scope: CoroutineScope) {
         maps.values.forEach { it.clear() }
         media.clear()
         listScenes.clear()
+        owners.clear()
         synchronized(pending) { pending.clear() }
         mediaDir.listFiles()?.forEach { it.delete() }
         storedKinds.forEach { changed(it.name) }
-        changed("media", "lists", "pending")
+        changed("media", "lists", "pending", "owners")
     }
 
     companion object {

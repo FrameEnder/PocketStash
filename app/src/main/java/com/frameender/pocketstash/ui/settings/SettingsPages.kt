@@ -667,7 +667,7 @@ fun StoragePage() {
                     CollectionRow(c, busy = saving != null || offline)
                 }
             }
-            Hint("Removing one only takes it off this list; its info stays until you clear it below. Videos stay in Downloads.")
+            Hint("Removing a list also removes the info it saved, except anything another list or a download still uses. Videos stay in Downloads.")
         }
 
         // ---------- behaviour ----------
@@ -707,8 +707,8 @@ fun StoragePage() {
             title = { Text("Clear saved info?") },
             text = {
                 Text(
-                    "Saved lists and their offline info are removed. Downloaded scenes stay, with the info " +
-                        "needed to browse them offline.",
+                    "Every saved list and its offline info is removed, including info saved before lists " +
+                        "tracked what they keep. Downloaded scenes stay, with the info needed to browse them offline.",
                 )
             },
             confirmButton = {
@@ -748,8 +748,32 @@ private fun kindIcon(k: EntityKind): ImageVector = when (k) {
 
 @Composable
 private fun CollectionRow(c: OfflineCollection, busy: Boolean) {
-    val saver = LocalContext.current.container.offlineSaver
+    val context = LocalContext.current
+    val saver = context.container.offlineSaver
     val kind = c.entityKind
+    var confirmRemove by remember { mutableStateOf(false) }
+    if (confirmRemove) {
+        AlertDialog(
+            onDismissRequest = { confirmRemove = false },
+            title = { Text("Remove saved list?") },
+            text = {
+                Text(
+                    "“${c.label}” and the info it saved are removed from this phone. Anything another saved " +
+                        "list or a download still uses is kept." +
+                        if (c.downloadQuality != null) " Downloaded videos stay; delete them in Downloads." else "",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmRemove = false
+                    saver.forget(c)
+                    context.toast("Removed “${c.label}”")
+                }) { Text("Remove", color = Ink.Red, maxLines = 1) }
+            },
+            dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text("Cancel", maxLines = 1) } },
+            containerColor = Ink.Raised,
+        )
+    }
     Row(
         Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -769,7 +793,7 @@ private fun CollectionRow(c: OfflineCollection, busy: Boolean) {
         IconButton(onClick = { saver.refresh(c) }, enabled = !busy) {
             Icon(Icons.Filled.Refresh, "Refresh", tint = if (busy) Ink.Line else Ink.Muted)
         }
-        IconButton(onClick = { saver.forget(c) }) {
+        IconButton(onClick = { confirmRemove = true }) {
             Icon(Icons.Filled.Delete, "Remove", tint = Ink.Red)
         }
     }

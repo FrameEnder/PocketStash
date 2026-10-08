@@ -21,6 +21,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -107,6 +108,12 @@ class OfflineSaver(
     val progress = MutableStateFlow<Progress?>(null)
     private var job: Job? = null
 
+    /** The collection being saved right now (by the screen or the daily refresh). */
+    @Volatile private var runningKey: String? = null
+
+    /** Collections removed while a save of them may still be running: that save must not bring them back. */
+    private val forgotten = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     val running: Boolean get() = job?.isActive == true
 
     // ---------------- remembered collections ----------------
@@ -124,12 +131,24 @@ class OfflineSaver(
         }
     }
 
-    /** Takes a collection off the list. Its files stay cached until space is needed or you clear them. */
+    /**
+     * Takes a collection off the list and removes the info it saved, except what another saved
+     * list or a download still uses. Thumbnails in the image cache age out on their own.
+     */
     fun forget(c: OfflineCollection) {
         scope.launch {
+            forgotten += c.key
+            if (runningKey == c.key) job?.cancelAndJoin()
             update { s -> s.copy(offlineCollections = StashJson.encodeToString(listSer, collections(s).filter { it.key != c.key })) }
+            withContext(Dispatchers.IO) {
+                library.release(ownerOf(c))
+                library.flush()
+            }
         }
     }
+
+    /** The owner tag this collection's saved info carries in the offline library. */
+    private fun ownerOf(c: OfflineCollection) = "list:" + c.key
 
     // ---------------- saving ----------------
 
@@ -148,6 +167,7 @@ class OfflineSaver(
             toast("Already saving “${progress.value?.label}”")
             return
         }
+        forgotten -= c.key
         job = scope.launch(Dispatchers.IO) {
             try {
                 val n = run(c)
@@ -184,24 +204,33 @@ class OfflineSaver(
      * Stores items that were listed under [scope] so the phone can list them there again.
      * Image cards don't say which gallery they're in, so that link is added from the scope.
      */
-    private fun storeScoped(kind: EntityKind, items: List<JsonObject>, scope: Scope) {
+    private fun storeScoped(kind: EntityKind, items: List<JsonObject>, scope: Scope, keep: (EntityKind, JsonObject) -> Unit) {
         for (o in items) {
             val linked = if (kind == EntityKind.IMAGES && scope is Scope.Gallery && o["galleries"] == null) {
                 JsonObject(o + ("galleries" to JsonArray(listOf(JsonObject(mapOf("id" to JsonPrimitive(scope.id)))))))
             } else o
             if (kind == EntityKind.MARKERS) continue // markers live inside their scene
-            library.put(kind, linked)
+            keep(kind, linked)
         }
     }
 
     /** Does the actual saving. Suspends until done; also used by the background refresh. */
     suspend fun run(c: OfflineCollection): Int = withContext(Dispatchers.IO) {
         if (repo.isOffline) throw StashException("You're in offline mode. Go online to save lists.")
+        runningKey = c.key
         try {
             progress.value = Progress(c.label, 0, 0)
             val kind = c.entityKind
+            // Everything this save stores is tagged as kept by this list (see OfflineLibrary.retain).
+            val owner = ownerOf(c)
+            val seen = HashSet<String>()
+            fun keep(k: EntityKind, o: JsonObject) {
+                val id = (o["id"] as? JsonPrimitive)?.contentOrNull ?: return
+                library.put(k, o, owner)
+                seen += library.entityKey(k, id)
+            }
             val todo = walk(c)
-            storeScoped(kind, todo, c.scope)
+            storeScoped(kind, todo, c.scope, ::keep)
 
             val loader = SingletonImageLoader.get(context)
             suspend fun fetch(url: String?) {
@@ -214,7 +243,7 @@ class OfflineSaver(
             suspend fun related(k: EntityKind, s: Scope) {
                 runCatching {
                     val page = repo.browseRaw(k, s, BrowseSpec.defaultSort(k, s), 1, 40)
-                    storeScoped(k, page.items, s)
+                    storeScoped(k, page.items, s, ::keep)
                 }
             }
             // Everything the saved entries link to, so their links still open offline.
@@ -229,7 +258,7 @@ class OfflineSaver(
             }
             suspend fun detail(k: EntityKind, id: String): JsonObject? =
                 runCatching { repo.rawDetail(k, id) }.getOrNull()?.also { o ->
-                    library.put(k, o)
+                    keep(k, o)
                     collectRefs(o)
                 }
 
@@ -259,7 +288,7 @@ class OfflineSaver(
 
             // The list's owner (the gallery whose images these are, the performer whose scenes…),
             // then what everything links to. Galleries first: theirs links get collected too.
-            val owner: Pair<EntityKind, String>? = when (val sc = c.scope) {
+            val scopeOwner: Pair<EntityKind, String>? = when (val sc = c.scope) {
                 is Scope.Performer -> EntityKind.PERFORMERS to sc.id
                 is Scope.Studio -> EntityKind.STUDIOS to sc.id
                 is Scope.Tag -> EntityKind.TAGS to sc.id
@@ -268,14 +297,18 @@ class OfflineSaver(
                 is Scope.Scene -> EntityKind.SCENES to sc.id
                 Scope.None -> null
             }
-            owner?.let { (k, id) -> ref(k, id) }
+            scopeOwner?.let { (k, id) -> ref(k, id) }
             for (k in listOf(EntityKind.SCENES, EntityKind.GALLERIES, EntityKind.GROUPS, EntityKind.PERFORMERS, EntityKind.STUDIOS, EntityKind.TAGS)) {
                 val ids = refs[k]?.toList().orEmpty()
                 ids.forEachIndexed { i, id ->
                     currentCoroutineContext().ensureActive()
-                    val isOwner = owner == (k to id)
-                    // Already on the phone: leave it, except the owner, which is refreshed.
-                    if (!isOwner && library.has(k, id)) return@forEachIndexed
+                    val isOwner = scopeOwner == (k to id)
+                    // Already on the phone: just note this list keeps it too. The owner is refreshed.
+                    if (!isOwner && library.has(k, id)) {
+                        library.claim(k, id, owner)
+                        seen += library.entityKey(k, id)
+                        return@forEachIndexed
+                    }
                     progress.value = Progress("${c.label} · linked ${k.label.lowercase()}", i, ids.size)
                     val o = detail(k, id) ?: return@forEachIndexed
                     runCatching { repo.cardFor(k, o) }.getOrNull()?.let { fetch(it.image) }
@@ -299,10 +332,19 @@ class OfflineSaver(
                 }
             }
 
+            if (c.key in forgotten) {
+                // Removed while this was saving: undo it instead of bringing the list back.
+                library.release(owner)
+                library.flush()
+                return@withContext 0
+            }
+            // Finished: whatever this list kept last time but no longer contains is let go.
+            library.retain(owner, seen)
             library.flush()
             remember(c.copy(count = todo.size, savedAt = System.currentTimeMillis()))
             todo.size
         } finally {
+            runningKey = null
             progress.value = null
         }
     }
