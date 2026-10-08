@@ -172,7 +172,7 @@ fun SecurityPage() {
 
     confirmPinFor?.let { next ->
         PinDialog(onDismiss = { confirmPinFor = null }) {
-            Text("Enter your current passcode", style = MaterialTheme.typography.titleMedium)
+            Text("Enter your current passcode", style = MaterialTheme.typography.titleMedium, color = Ink.Text)
             Spacer(Modifier.height(4.dp))
             PinUnlock(
                 onUnlocked = {
@@ -205,6 +205,7 @@ private fun PinDialog(onDismiss: () -> Unit, content: @Composable () -> Unit) {
         Surface(
             shape = RoundedCornerShape(28.dp),
             color = Ink.Raised,
+            contentColor = Ink.Text,
             modifier = Modifier.padding(16.dp),
         ) {
             Column(
@@ -229,7 +230,7 @@ private fun ChoosePinDialog(onDismiss: () -> Unit, onChosen: (String) -> Unit) {
     PinDialog(onDismiss) {
         Text(
             if (first == null) "Choose a passcode" else "Enter it again",
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleMedium, color = Ink.Text,
         )
         Text(
             if (first == null) "${LockPolicy.MIN_PIN}–${LockPolicy.MAX_PIN} digits" else "To make sure it's right",

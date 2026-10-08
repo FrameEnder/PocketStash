@@ -35,10 +35,12 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -100,6 +102,14 @@ fun LockScreen() {
     // Back leaves the app instead of slipping past the lock.
     BackHandler { activity?.moveTaskToBack(true) }
 
+    // Light text on the dark backdrop (a bare Box doesn't set a content color, which left the
+    // text and digits dark).
+    CompositionLocalProvider(LocalContentColor provides Ink.Text) { LockScreenBody(method, activity) }
+}
+
+@Composable
+private fun LockScreenBody(method: String, activity: Activity?) {
+    val lock = LocalContext.current.appLock
     Box(
         Modifier
             .fillMaxSize()
@@ -121,7 +131,7 @@ fun LockScreen() {
                 contentAlignment = Alignment.Center,
             ) { Icon(Icons.Filled.Lock, null, tint = Ink.Amber, modifier = Modifier.size(32.dp)) }
             Spacer(Modifier.height(14.dp))
-            Text("PocketStash is locked", style = MaterialTheme.typography.titleLarge)
+            Text("PocketStash is locked", style = MaterialTheme.typography.titleLarge, color = Ink.Text)
             Spacer(Modifier.height(4.dp))
             when (method) {
                 LockPolicy.METHOD_PIN -> PinUnlock(onUnlocked = { lock.unlock() })
@@ -289,14 +299,14 @@ fun NumberPad(
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         rows.forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                row.forEach { d -> PadKey(enabled, onClick = { onDigit(d) }) { Text(d.toString(), fontSize = 26.sp) } }
+                row.forEach { d -> PadKey(enabled, onClick = { onDigit(d) }) { Text(d.toString(), fontSize = 26.sp, color = Ink.Text) } }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             PadKey(enabled, subtle = true, onClick = onBackspace) {
                 Icon(Icons.AutoMirrored.Filled.Backspace, "Delete", tint = Ink.Muted)
             }
-            PadKey(enabled, onClick = { onDigit('0') }) { Text("0", fontSize = 26.sp) }
+            PadKey(enabled, onClick = { onDigit('0') }) { Text("0", fontSize = 26.sp, color = Ink.Text) }
             PadKey(enabled && canSubmit, accent = true, onClick = onSubmit) {
                 Icon(Icons.Filled.Check, "Enter", tint = if (enabled && canSubmit) Ink.OnAmber else Ink.Muted)
             }

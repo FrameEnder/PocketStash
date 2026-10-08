@@ -34,6 +34,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -64,6 +66,8 @@ data class SceneDownload(
     /** The scene's file name and length when downloaded, so a different server's scene 12 isn't mistaken for this one. */
     val fileKey: String = "",
     val screenshot: String? = null,
+    /** MP4 conversions arrive unseekable; true once copied into a regular, seekable MP4. */
+    val remuxed: Boolean = false,
 ) {
     val done: Boolean get() = status == DONE
     val progress: Float? get() = if (total > 0) (bytes.toFloat() / total).coerceIn(0f, 1f) else null
@@ -478,9 +482,42 @@ class SceneDownloads(
         }
         if (d.sceneId in cancelled) { part.delete(); return }
         if (target.exists()) target.delete()
-        if (!part.renameTo(target)) throw IOException("Couldn't save the file")
+        // Stash's MP4 conversions are fragmented (made for streaming): rewrite them so the
+        // player knows the length and can seek. If that fails, keep the file as it came.
+        val remuxed = !resumable && remuxInto(part, target)
+        if (!remuxed && !part.renameTo(target)) throw IOException("Couldn't save the file")
+        part.delete()
         update(d.sceneId) {
-            it.copy(status = SceneDownload.DONE, bytes = target.length(), total = target.length(), finishedAt = System.currentTimeMillis())
+            it.copy(
+                status = SceneDownload.DONE, bytes = target.length(), total = target.length(),
+                finishedAt = System.currentTimeMillis(), remuxed = remuxed || resumable,
+            )
+        }
+    }
+
+    private val remuxLock = Mutex()
+
+    /** Copies [src] into [target] as a seekable MP4. False (and nothing written) if it can't. */
+    private suspend fun remuxInto(src: File, target: File): Boolean = remuxLock.withLock {
+        if (src.length() > freeBytes()) return@withLock false
+        val tmp = File(dir, target.name + ".fix")
+        runCatching { Remux.toSeekableMp4(src, tmp) }.isSuccess && tmp.renameTo(target)
+    }
+
+    /**
+     * Downloads finished before this fix are still unseekable conversions: fix them once,
+     * in the background, the next time the app starts.
+     */
+    suspend fun fixUnseekable() = withContext(Dispatchers.IO) {
+        // Leftovers from a rewrite that was interrupted (not one running right now).
+        remuxLock.withLock { dir.listFiles()?.filter { it.name.endsWith(".fix") }?.forEach { it.delete() } }
+        for (d in _items.value.filter { it.done && !it.remuxed && it.quality != "original" }) {
+            val file = File(dir, d.fileName)
+            if (!file.exists()) continue
+            // Written beside it and swapped in at the end, so it stays playable meanwhile.
+            remuxInto(file, file)
+            // Marked either way, so a file Android can't rewrite isn't retried on every start.
+            update(d.sceneId) { it.copy(remuxed = true, bytes = file.length(), total = file.length()) }
         }
     }
 

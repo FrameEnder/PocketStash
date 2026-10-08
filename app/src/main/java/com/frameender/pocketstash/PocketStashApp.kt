@@ -108,6 +108,8 @@ class AppContainer(context: Context) {
             runCatching { repository.flushPending() }
             downloads.start()
         }
+        // Older MP4 downloads were saved unseekable: rewrite them once (works offline too).
+        appScope.launch { runCatching { downloads.fixUnseekable() } }
         // Changing "Wi-Fi only" re-plans waiting downloads.
         appScope.launch {
             settings.filterNotNull().map { it.downloadWifiOnly }.distinctUntilChanged().drop(1).collect {
