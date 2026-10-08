@@ -29,6 +29,13 @@ object Biometric {
         credentialOnly: Boolean = false,
         onResult: (ok: Boolean, error: String?) -> Unit,
     ): CancellationSignal? {
+        val reply = onResult
+        // Every way the prompt can end clears the "coming straight back" pass it set up.
+        @Suppress("NAME_SHADOWING")
+        val onResult: (Boolean, String?) -> Unit = { ok, err ->
+            activity.appLock.returnHandled()
+            reply(ok, err)
+        }
         if (Build.VERSION.SDK_INT < 28) {
             onResult(false, "Needs Android 9 or newer")
             return null

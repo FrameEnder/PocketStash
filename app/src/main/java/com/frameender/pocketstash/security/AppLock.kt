@@ -73,7 +73,17 @@ class AppLock(private val app: Application) : Application.ActivityLifecycleCallb
      * page, the phone's lock screen) and will come straight back: don't ask again for that.
      */
     fun expectReturn() {
-        skipUntil = SystemClock.elapsedRealtime() + 2 * 60_000L
+        skipUntil = SystemClock.elapsedRealtime() + SKIP_WINDOW_MS
+    }
+
+    /**
+     * The thing [expectReturn] was for is over (e.g. the fingerprint prompt closed). If the app
+     * never actually left (the prompt was drawn over it), the pass is cancelled right away, so the
+     * next real trip to the background locks as it should. If the app is still behind something
+     * (the phone's PIN screen), the pass is left for the moment it comes back.
+     */
+    fun returnHandled() {
+        if (!inBackground) skipUntil = 0
     }
 
     // ------------------------------------------------------------------ passcode
@@ -236,6 +246,9 @@ class AppLock(private val app: Application) : Application.ActivityLifecycleCallb
         private const val K_HIDE_RECENTS = "hide_recents"
         private const val K_FAILS = "fails"
         private const val K_WAIT_UNTIL = "wait_until"
+
+        /** A pass from [expectReturn] is only good for this long. */
+        private const val SKIP_WINDOW_MS = 60_000L
 
         val TIMEOUTS = listOf(0 to "Immediately", 30 to "30 s", 60 to "1 min", 300 to "5 min")
     }
