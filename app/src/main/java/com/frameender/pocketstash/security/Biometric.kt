@@ -52,9 +52,9 @@ object Biometric {
             }
 
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                // (The Android 9 "Cancel" button reports through its own listener above, not here.)
                 val cancelled = errorCode == BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED ||
-                    errorCode == BiometricPrompt.BIOMETRIC_ERROR_CANCELED ||
-                    errorCode == BiometricPrompt.BIOMETRIC_ERROR_NEGATIVE_BUTTON
+                    errorCode == BiometricPrompt.BIOMETRIC_ERROR_CANCELED
                 onResult(false, if (cancelled) null else errString.toString())
             }
             // onAuthenticationFailed (one unrecognised finger) is left to the system prompt,
