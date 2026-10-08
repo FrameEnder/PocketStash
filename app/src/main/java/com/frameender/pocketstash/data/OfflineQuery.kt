@@ -133,8 +133,29 @@ object OfflineQuery {
         return out.values.toList()
     }
 
-    /** Every entity of [kind] the phone knows about, with counts recomputed locally. */
-    fun all(kind: EntityKind, snap: Snapshot): List<JsonObject> {
+    /**
+     * Every entity of [kind] the phone knows about, with counts recomputed locally. With
+     * [populatedOnly] (lists, search, stats) performers, studios, tags, groups and galleries
+     * appear only while something on the phone belongs to them: a performer whose last scene
+     * was removed disappears, even though Stash would still list them.
+     */
+    fun all(kind: EntityKind, snap: Snapshot, populatedOnly: Boolean = true): List<JsonObject> {
+        val list = allWithCounts(kind, snap)
+        if (!populatedOnly) return list
+        fun n(o: JsonObject, vararg keys: String) = keys.sumOf { o.l(it) ?: 0L }
+        return when (kind) {
+            EntityKind.SCENES, EntityKind.IMAGES, EntityKind.MARKERS -> list
+            EntityKind.GALLERIES -> list.filter { n(it, "image_count") > 0 }
+            EntityKind.GROUPS -> list.filter { n(it, "scene_count") > 0 }
+            EntityKind.PERFORMERS -> list.filter { n(it, "scene_count", "image_count", "gallery_count") > 0 }
+            EntityKind.STUDIOS -> list.filter { n(it, "scene_count", "image_count", "gallery_count") > 0 }
+            EntityKind.TAGS -> list.filter {
+                n(it, "scene_count", "scene_marker_count", "image_count", "gallery_count", "performer_count", "studio_count", "group_count") > 0
+            }
+        }
+    }
+
+    private fun allWithCounts(kind: EntityKind, snap: Snapshot): List<JsonObject> {
         val ix = snap.index
         return when (kind) {
             EntityKind.SCENES -> snap.scenes.values.toList()
@@ -143,39 +164,51 @@ object OfflineQuery {
             EntityKind.GALLERIES -> snap.galleries.values.map { g ->
                 val id = g.s("id")
                 val n = snap.images.values.count { i -> i.ids("galleries").contains(id) }
-                if (n > 0) g.with("image_count" to JsonPrimitive(n)) else g
+                g.with("image_count" to JsonPrimitive(n))
             }
-            EntityKind.PERFORMERS -> merged(snap.performers, ix.performerStubs).map { p ->
+            EntityKind.PERFORMERS -> {
+              val galleries = galleriesWithImages(snap)
+              merged(snap.performers, ix.performerStubs).map { p ->
                 val id = p.s("id") ?: ""
                 p.with(
                     "scene_count" to JsonPrimitive(ix.scenesByPerformer[id]?.size ?: 0),
                     "image_count" to JsonPrimitive(snap.images.values.count { it.ids("performers").contains(id) }),
-                    "gallery_count" to JsonPrimitive(snap.galleries.values.count { it.ids("performers").contains(id) }),
+                    "gallery_count" to JsonPrimitive(galleries.count { it.ids("performers").contains(id) }),
                     "group_count" to JsonPrimitive(groupsWithPerformer(id, snap).size),
                 )
+              }
             }
-            EntityKind.STUDIOS -> merged(snap.studios, ix.studioStubs).map { st ->
+            EntityKind.STUDIOS -> {
+              val galleries = galleriesWithImages(snap)
+              merged(snap.studios, ix.studioStubs).map { st ->
                 val id = st.s("id") ?: ""
                 val scenes = ix.scenesByStudio[id].orEmpty()
                 st.with(
                     "scene_count" to JsonPrimitive(scenes.size),
                     "image_count" to JsonPrimitive(snap.images.values.count { it.o("studio")?.s("id") == id }),
-                    "gallery_count" to JsonPrimitive(snap.galleries.values.count { it.o("studio")?.s("id") == id }),
+                    "gallery_count" to JsonPrimitive(galleries.count { it.o("studio")?.s("id") == id }),
                     "performer_count" to JsonPrimitive(scenes.flatMap { snap.scenes[it]?.ids("performers").orEmpty() }.toSet().size),
                     "group_count" to JsonPrimitive(merged(snap.groups, ix.groupStubs).count { it.o("studio")?.s("id") == id }),
                 )
+              }
             }
-            EntityKind.TAGS -> merged(snap.tags, ix.tagStubs).map { t ->
+            EntityKind.TAGS -> {
+              // Only performers, studios and groups that are themselves shown count towards a tag.
+              val performers = all(EntityKind.PERFORMERS, snap)
+              val studios = all(EntityKind.STUDIOS, snap)
+              val groups = all(EntityKind.GROUPS, snap)
+              merged(snap.tags, ix.tagStubs).map { t ->
                 val id = t.s("id") ?: ""
                 t.with(
                     "scene_count" to JsonPrimitive(ix.scenesByTag[id]?.size ?: 0),
                     "scene_marker_count" to JsonPrimitive(ix.markers.count { markerHasTag(it, id) }),
                     "image_count" to JsonPrimitive(snap.images.values.count { it.ids("tags").contains(id) }),
-                    "gallery_count" to JsonPrimitive(snap.galleries.values.count { it.ids("tags").contains(id) }),
-                    "performer_count" to JsonPrimitive(snap.performers.values.count { it.ids("tags").contains(id) }),
-                    "studio_count" to JsonPrimitive(snap.studios.values.count { it.ids("tags").contains(id) }),
-                    "group_count" to JsonPrimitive(snap.groups.values.count { it.ids("tags").contains(id) }),
+                    "gallery_count" to JsonPrimitive(all(EntityKind.GALLERIES, snap).count { it.ids("tags").contains(id) }),
+                    "performer_count" to JsonPrimitive(performers.count { it.ids("tags").contains(id) }),
+                    "studio_count" to JsonPrimitive(studios.count { it.ids("tags").contains(id) }),
+                    "group_count" to JsonPrimitive(groups.count { it.ids("tags").contains(id) }),
                 )
+              }
             }
             EntityKind.GROUPS -> merged(snap.groups, ix.groupStubs).map { g ->
                 g.with("scene_count" to JsonPrimitive(ix.scenesByGroup[g.s("id") ?: ""]?.size ?: 0))
@@ -187,7 +220,14 @@ object OfflineQuery {
     fun get(kind: EntityKind, id: String, snap: Snapshot): JsonObject? = when (kind) {
         EntityKind.SCENES -> snap.scenes[id]
         EntityKind.IMAGES -> snap.images[id]
-        else -> all(kind, snap).firstOrNull { it.s("id") == id }
+        // Links still open (e.g. a scene's gallery with no images saved), just not listed.
+        else -> all(kind, snap, populatedOnly = false).firstOrNull { it.s("id") == id }
+    }
+
+    /** Galleries with at least one image saved on the phone. */
+    private fun galleriesWithImages(snap: Snapshot): List<JsonObject> {
+        val withImages = snap.images.values.flatMap { it.ids("galleries") }.toSet()
+        return snap.galleries.values.filter { it.s("id") in withImages }
     }
 
     private fun groupsWithPerformer(performerId: String, snap: Snapshot): Set<String> =
@@ -401,7 +441,7 @@ object OfflineQuery {
                 "scenes_duration" to n(files.sumOf { it.d("duration") ?: 0.0 }),
                 "image_count" to n(snap.images.size),
                 "images_size" to n(0),
-                "gallery_count" to n(snap.galleries.size),
+                "gallery_count" to n(all(EntityKind.GALLERIES, snap).size),
                 "performer_count" to n(all(EntityKind.PERFORMERS, snap).size),
                 "studio_count" to n(all(EntityKind.STUDIOS, snap).size),
                 "group_count" to n(all(EntityKind.GROUPS, snap).size),
