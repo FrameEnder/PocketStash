@@ -105,7 +105,7 @@ fun SaveOfflineDialog(base: OfflineCollection, total: Int?, onDismiss: () -> Uni
                             else "Thumbnails only: quick and small."
                         EntityKind.GALLERIES ->
                             "Saves each gallery and every image in it, as they are now" +
-                                if (full) ", full size. Uses a lot of space for big galleries." else ", as thumbnails.
+                                if (full) ", full size. Uses a lot of space for big galleries." else ", as thumbnails."
                         EntityKind.SCENES ->
                             if (videos) "Saves each scene's page and screenshot, and queues the videos in Downloads " +
                                 "(${if (wifiOnly) "on Wi-Fi" else "on any connection"}). Converted MP4s take longer; Stash makes them as they download."

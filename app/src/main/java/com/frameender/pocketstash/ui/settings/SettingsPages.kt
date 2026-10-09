@@ -107,7 +107,7 @@ import kotlin.math.roundToInt
 private val D = SettingsDefaults
 
 @Composable
-private fun settingsState(): AppSettings {
+internal fun settingsState(): AppSettings {
     val s by LocalContext.current.container.settings.collectAsState()
     return s ?: AppSettings()
 }
