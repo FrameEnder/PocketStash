@@ -108,6 +108,8 @@ class AppContainer(context: Context) {
             runCatching { repository.flushPending() }
             downloads.start()
         }
+        // Pick up lists still waiting to be saved for offline (the queue survives restarts).
+        offlineSaver.startWorker()
         // Older MP4 downloads were saved unseekable: rewrite them once (works offline too).
         appScope.launch { runCatching { downloads.fixUnseekable() } }
         // Changing "Wi-Fi only" re-plans waiting downloads.

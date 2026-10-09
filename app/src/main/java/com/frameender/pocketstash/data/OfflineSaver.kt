@@ -1,6 +1,27 @@
 package com.frameender.pocketstash.data
 
 import android.content.Context
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
+import androidx.work.ExistingWorkPolicy
+import androidx.work.ForegroundInfo
+import androidx.work.OneTimeWorkRequestBuilder
+import com.frameender.pocketstash.MainActivity
+import com.frameender.pocketstash.R
+import kotlinx.coroutines.async
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.StateFlow
 import android.widget.Toast
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -106,7 +127,9 @@ class OfflineSaver(
     data class Progress(val label: String, val done: Int, val total: Int)
 
     val progress = MutableStateFlow<Progress?>(null)
-    private var job: Job? = null
+
+    /** The save running right now (so "Stop" and removing the list can cancel just that one). */
+    @Volatile private var current: Job? = null
 
     /** The collection being saved right now (by the screen or the daily refresh). */
     @Volatile private var runningKey: String? = null
@@ -114,7 +137,196 @@ class OfflineSaver(
     /** Collections removed while a save of them may still be running: that save must not bring them back. */
     private val forgotten = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
-    val running: Boolean get() = job?.isActive == true
+    val running: Boolean get() = runningKey != null
+
+    // ---------------- the save queue ----------------
+
+    /**
+     * Lists waiting to be saved, one after another. Kept in a file so a queue survives the app
+     * being closed; worked through by [OfflineSaveWorker] in the foreground (with a
+     * notification), so saving carries on while you use other apps.
+     */
+    private val queueFile = java.io.File(context.filesDir, "save_queue.json")
+    private val _queue = MutableStateFlow(loadQueue())
+    val queue: StateFlow<List<OfflineCollection>> = _queue
+
+    private fun loadQueue(): List<OfflineCollection> = runCatching {
+        if (queueFile.exists()) StashJson.decodeFromString(listSer, queueFile.readText()) else emptyList()
+    }.getOrDefault(emptyList())
+
+    private fun persistQueue() {
+        val text = StashJson.encodeToString(listSer, _queue.value)
+        scope.launch(Dispatchers.IO) {
+            synchronized(queueFile) {
+                val tmp = java.io.File(queueFile.parentFile, queueFile.name + ".tmp")
+                tmp.writeText(text)
+                if (!tmp.renameTo(queueFile)) { queueFile.delete(); tmp.renameTo(queueFile) }
+            }
+        }
+    }
+
+    /** Adds lists to the queue (skipping ones already waiting or being saved) and starts working. */
+    fun enqueue(lists: List<OfflineCollection>, quiet: Boolean = false) {
+        val added: List<OfflineCollection>
+        synchronized(this) {
+            val taken = _queue.value.map { it.key }.toSet() + listOfNotNull(runningKey)
+            added = lists.filter { it.key !in taken }.distinctBy { it.key }
+            if (added.isEmpty()) {
+                if (!quiet) toast("“${lists.firstOrNull()?.label}” is already in the save queue")
+                return
+            }
+            forgotten.removeAll(added.map { it.key }.toSet())
+            _queue.value = _queue.value + added
+            persistQueue()
+        }
+        if (!quiet) {
+            val waiting = _queue.value.size + (if (running) 1 else 0) - 1
+            toast(
+                if (waiting <= 0) "Saving “${added.first().label}” for offline"
+                else "Added “${added.first().label}” to the save queue · $waiting ahead of it",
+            )
+        }
+        startWorker()
+    }
+
+    /** Takes a waiting list off the queue (doesn't touch one that's being saved). */
+    fun dequeue(c: OfflineCollection) {
+        synchronized(this) {
+            _queue.value = _queue.value.filter { it.key != c.key }
+            persistQueue()
+        }
+    }
+
+    fun clearQueue() {
+        synchronized(this) {
+            _queue.value = emptyList()
+            persistQueue()
+        }
+    }
+
+    /** Starts (or continues) working through the queue. Safe to call any time. */
+    fun startWorker() {
+        if (_queue.value.isEmpty()) return
+        val req = OneTimeWorkRequestBuilder<OfflineSaveWorker>()
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(SAVE_WORK, ExistingWorkPolicy.APPEND_OR_REPLACE, req)
+    }
+
+    private fun takeNext(): OfflineCollection? = synchronized(this) {
+        val next = _queue.value.firstOrNull() ?: return null
+        _queue.value = _queue.value.drop(1)
+        persistQueue()
+        next
+    }
+
+    private fun putBack(c: OfflineCollection) = synchronized(this) {
+        if (_queue.value.none { it.key == c.key } && c.key !in forgotten) {
+            _queue.value = listOf(c) + _queue.value
+            persistQueue()
+        }
+    }
+
+    /** Works through the queue, one list at a time. Called by [OfflineSaveWorker]. */
+    suspend fun drain(worker: CoroutineWorker) = supervisorScope {
+        // (Supervisor: one list failing mustn't stop the rest of the queue.)
+        ensureChannel()
+        var saved = 0
+        var failed = 0
+        while (isActive) {
+            val c = takeNext() ?: break
+            // Keep the notification in step with progress.
+            val ticker = launch {
+                while (isActive) {
+                    runCatching { worker.setForeground(foregroundInfo(c, progress.value, _queue.value.size)) }
+                    delay(1_000)
+                }
+            }
+            val job = async(Dispatchers.IO) { run(c) }
+            current = job
+            try {
+                val n = job.await()
+                if (c.key !in forgotten) {
+                    saved++
+                    toast("Saved $n from “${c.label}” for offline")
+                }
+            } catch (e: CancellationException) {
+                if (!isActive) {
+                    // The worker itself was stopped (paused, or the network went): try again later.
+                    putBack(c)
+                    throw e
+                }
+                // Only this list was stopped ("Stop", or it was removed): carry on with the next.
+                if (c.key !in forgotten) toast("Stopped saving “${c.label}”")
+            } catch (e: Exception) {
+                failed++
+                toast("“${c.label}”: " + (e.message ?: "saving for offline failed"))
+            } finally {
+                current = null
+                ticker.cancel()
+            }
+        }
+        notifyFinished(saved, failed)
+    }
+
+    // ---------------- notifications ----------------
+
+    private val nm get() = context.getSystemService(NotificationManager::class.java)
+
+    private fun ensureChannel() {
+        if (nm.getNotificationChannel(SAVE_CHANNEL) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(SAVE_CHANNEL, "Saving for offline", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "Progress of lists being saved for offline"
+                },
+            )
+        }
+    }
+
+    private fun openIntent(): PendingIntent = PendingIntent.getActivity(
+        context, 2,
+        Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+
+    private fun foregroundInfo(c: OfflineCollection, p: Progress?, waiting: Int): ForegroundInfo {
+        val b = NotificationCompat.Builder(context, SAVE_CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_download)
+            .setContentTitle("Saving “${c.label}”")
+            .setContentText(
+                listOfNotNull(
+                    p?.takeIf { it.total > 0 }?.let { "${it.done} of ${it.total}" } ?: "Getting the list…",
+                    if (waiting > 0) "$waiting more waiting" else null,
+                ).joinToString(" · "),
+            )
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setContentIntent(openIntent())
+            .addAction(0, "Pause", WorkManager.getInstance(context).createCancelPendingIntent(workerId ?: java.util.UUID.randomUUID()))
+        if (p != null && p.total > 0) b.setProgress(p.total, p.done, false) else b.setProgress(0, 0, true)
+        val n = b.build()
+        return if (Build.VERSION.SDK_INT >= 29) ForegroundInfo(SAVE_NOTIF, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        else ForegroundInfo(SAVE_NOTIF, n)
+    }
+
+    /** Set by the worker so the notification's Pause button can stop it. */
+    @Volatile var workerId: java.util.UUID? = null
+
+    private fun notifyFinished(saved: Int, failed: Int) {
+        if (saved + failed == 0) return
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return
+        val n = NotificationCompat.Builder(context, SAVE_CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_download)
+            .setContentTitle(if (saved == 1) "1 list saved for offline" else "$saved lists saved for offline")
+            .setContentText(if (failed > 0) "$failed couldn't be saved. Try again from Storage & offline." else "Ready to browse without your server")
+            .setContentIntent(openIntent())
+            .setAutoCancel(true)
+            .build()
+        runCatching { NotificationManagerCompat.from(context).notify(SAVE_DONE_NOTIF, n) }
+    }
 
     // ---------------- remembered collections ----------------
 
@@ -138,7 +350,8 @@ class OfflineSaver(
     fun forget(c: OfflineCollection) {
         scope.launch {
             forgotten += c.key
-            if (runningKey == c.key) job?.cancelAndJoin()
+            dequeue(c)
+            if (runningKey == c.key) current?.cancelAndJoin()
             update { s -> s.copy(offlineCollections = StashJson.encodeToString(listSer, collections(s).filter { it.key != c.key })) }
             withContext(Dispatchers.IO) {
                 library.release(ownerOf(c))
@@ -152,37 +365,19 @@ class OfflineSaver(
 
     // ---------------- saving ----------------
 
-    /** Starts saving in the background (from a screen). */
-    fun save(c: OfflineCollection) = start(c)
+    /** Queues a list for saving (from a screen). Several can wait their turn. */
+    fun save(c: OfflineCollection) = enqueue(listOf(c))
 
     /** Re-saves a remembered collection with its original options. */
-    fun refresh(c: OfflineCollection) = start(c)
+    fun refresh(c: OfflineCollection) = enqueue(listOf(c))
 
     private fun toast(text: String) {
         scope.launch(Dispatchers.Main) { Toast.makeText(context, text, Toast.LENGTH_LONG).show() }
     }
 
-    private fun start(c: OfflineCollection) {
-        if (running) {
-            toast("Already saving “${progress.value?.label}”")
-            return
-        }
-        forgotten -= c.key
-        job = scope.launch(Dispatchers.IO) {
-            try {
-                val n = run(c)
-                toast("Saved $n from “${c.label}” for offline")
-            } catch (e: CancellationException) {
-                toast("Stopped saving “${c.label}”")
-                throw e
-            } catch (e: Exception) {
-                toast(e.message ?: "Saving for offline failed")
-            }
-        }
-    }
-
+    /** Stops the list being saved right now; the rest of the queue carries on. */
     fun cancel() {
-        job?.cancel()
+        current?.cancel()
     }
 
     /** Every entry of the list (up to [OfflineCollection.max]) as raw JSON, straight from the server. */
@@ -350,14 +545,32 @@ class OfflineSaver(
     }
 }
 
+private const val SAVE_WORK = "pocketstash-offline-save"
+private const val SAVE_CHANNEL = "offline_save"
+private const val SAVE_NOTIF = 4840
+private const val SAVE_DONE_NOTIF = 4841
+
 /** Daily re-save of every remembered collection, on Wi-Fi while charging. */
 class OfflineRefreshWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
         val c = applicationContext.container
         val s = c.settings.filterNotNull().first()
         if (!s.offlineAutoRefresh || !s.isConfigured) return Result.success()
-        for (col in c.offlineSaver.collections(s)) {
-            runCatching { c.offlineSaver.run(col) }
+        // Through the same queue as saves made by hand, so they never run at the same time.
+        c.offlineSaver.enqueue(c.offlineSaver.collections(s), quiet = true)
+        return Result.success()
+    }
+}
+
+/** Works through the save queue in the foreground, so saving continues with the app in the background. */
+class OfflineSaveWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
+    override suspend fun doWork(): Result {
+        val saver = applicationContext.container.offlineSaver
+        saver.workerId = id
+        try {
+            saver.drain(this)
+        } finally {
+            saver.workerId = null
         }
         return Result.success()
     }

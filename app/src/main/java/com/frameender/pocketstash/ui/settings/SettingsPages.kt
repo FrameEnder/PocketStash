@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Visibility
@@ -529,6 +530,7 @@ fun StoragePage() {
     val scope = rememberCoroutineScope()
     val s = settingsState()
     val saving by saver.progress.collectAsState()
+    val waiting by saver.queue.collectAsState()
     val offline by container.connection.offline.collectAsState()
     val downloadItems by downloads.items.collectAsState()
     val libraryVersion by container.library.version.collectAsState()
@@ -652,6 +654,37 @@ fun StoragePage() {
                 }
             }
         }
+        // Lists waiting their turn (saved one after another, in the background).
+        if (waiting.isNotEmpty()) {
+            SettingsCard(Modifier.padding(bottom = 8.dp)) {
+                Row(Modifier.padding(start = 14.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (saving == null) "Waiting to save · ${waiting.size}" else "Up next · ${waiting.size}",
+                        style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f),
+                    )
+                    if (saving == null && !offline) TextButton(onClick = { saver.startWorker() }) { Text("Resume", maxLines = 1) }
+                    TextButton(onClick = { saver.clearQueue() }) { Text("Clear", color = Ink.Red, maxLines = 1) }
+                }
+                waiting.forEach { c ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            c.label, style = MaterialTheme.typography.bodyMedium, color = Ink.Muted,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = { saver.dequeue(c) }) { Icon(Icons.Filled.Close, "Remove from queue", tint = Ink.Muted) }
+                    }
+                }
+                if (saving == null) {
+                    Hint(
+                        if (offline) "Waiting for your server: saving needs it." else "Paused, or waiting for a connection. Tap Resume to carry on.",
+                        Modifier.padding(start = 8.dp, end = 8.dp, bottom = 10.dp),
+                    )
+                }
+            }
+        }
         if (collections.isEmpty()) {
             SettingsCard {
                 Text(
@@ -664,7 +697,7 @@ fun StoragePage() {
             SettingsCard {
                 collections.forEachIndexed { i, c ->
                     if (i > 0) CardDivider()
-                    CollectionRow(c, busy = saving != null || offline)
+                    CollectionRow(c, busy = offline)
                 }
             }
             Hint("Removing a list also removes the info it saved, except anything another list or a download still uses. Videos stay in Downloads.")
