@@ -30,7 +30,8 @@ import okhttp3.HttpUrl
  */
 class StashRepository(
     private val client: StashClient,
-    private val connection: Connection,
+    /** Public so offline saving can fetch pictures with the same client and address rewriting. */
+    val connection: Connection,
     private val library: OfflineLibrary,
 ) {
     private fun vars(block: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) = buildJsonObject(block)

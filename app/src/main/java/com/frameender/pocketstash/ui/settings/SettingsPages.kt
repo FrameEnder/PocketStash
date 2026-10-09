@@ -632,78 +632,19 @@ fun StoragePage() {
 
         // ---------- saved collections ----------
         GroupLabel("Saved lists")
-        saving?.let { p ->
-            SettingsCard(Modifier.padding(bottom = 8.dp)) {
-                Column(Modifier.padding(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(Modifier.size(18.dp), color = Ink.Teal, strokeWidth = 2.dp)
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            "Saving “${p.label}”" + if (p.total > 0) " · ${p.done}/${p.total}" else "",
-                            style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f),
-                            maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        )
-                        TextButton(onClick = { saver.cancel() }) { Text("Stop", maxLines = 1) }
-                    }
-                    if (p.total > 0) {
-                        LinearProgressIndicator(
-                            progress = { p.done.toFloat() / p.total }, color = Ink.Teal, trackColor = Ink.Raised,
-                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                        )
-                    }
-                }
-            }
+        SettingsCard {
+            NavRow(
+                Icons.Filled.Bookmarks, Ink.Violet, "Saved lists",
+                buildString {
+                    append(if (collections.isEmpty()) "None yet" else "${collections.size} ${if (collections.size == 1) "list" else "lists"}")
+                    saving?.let { p -> append(" · saving “${p.label}”") }
+                    if (waiting.isNotEmpty()) append(" · ${waiting.size} waiting")
+                },
+                badge = if (saving != null || waiting.isNotEmpty()) "${waiting.size + (if (saving != null) 1 else 0)}" else null,
+            ) { nav.savedLists() }
         }
-        // Lists waiting their turn (saved one after another, in the background).
-        if (waiting.isNotEmpty()) {
-            SettingsCard(Modifier.padding(bottom = 8.dp)) {
-                Row(Modifier.padding(start = 14.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (saving == null) "Waiting to save · ${waiting.size}" else "Up next · ${waiting.size}",
-                        style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f),
-                    )
-                    if (saving == null && !offline) TextButton(onClick = { saver.startWorker() }) { Text("Resume", maxLines = 1) }
-                    TextButton(onClick = { saver.clearQueue() }) { Text("Clear", color = Ink.Red, maxLines = 1) }
-                }
-                waiting.forEach { c ->
-                    Row(
-                        Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            c.label, style = MaterialTheme.typography.bodyMedium, color = Ink.Muted,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
-                        )
-                        IconButton(onClick = { saver.dequeue(c) }) { Icon(Icons.Filled.Close, "Remove from queue", tint = Ink.Muted) }
-                    }
-                }
-                if (saving == null) {
-                    Hint(
-                        if (offline) "Waiting for your server: saving needs it." else "Paused, or waiting for a connection. Tap Resume to carry on.",
-                        Modifier.padding(start = 8.dp, end = 8.dp, bottom = 10.dp),
-                    )
-                }
-            }
-        }
-        if (collections.isEmpty()) {
-            SettingsCard {
-                Text(
-                    "Nothing saved yet. Tap the save-for-offline button next to the sort and filter chips on any list " +
-                        "(Scenes, a performer's scenes, a gallery's images…). Scene lists can download their videos too.",
-                    style = MaterialTheme.typography.bodyMedium, color = Ink.Muted, modifier = Modifier.padding(16.dp),
-                )
-            }
-        } else {
-            SettingsCard {
-                collections.forEachIndexed { i, c ->
-                    if (i > 0) CardDivider()
-                    CollectionRow(c, busy = offline)
-                }
-            }
-            Hint("Removing a list also removes the info it saved, except anything another list or a download still uses. Videos stay in Downloads.")
-        }
+        Hint("Lists you saved for offline, the save queue, and what's being saved right now. Removing a list also removes the info only it kept.")
 
-        // ---------- behaviour ----------
         GroupLabel("Behaviour")
         SettingsCard {
             SwitchSetting(
@@ -769,66 +710,6 @@ private fun Legend(color: Color, text: String) {
         Box(Modifier.size(8.dp).clip(RoundedCornerShape(2.dp)).background(color))
         Spacer(Modifier.width(6.dp))
         Text(text, style = MaterialTheme.typography.bodySmall, color = Ink.Muted)
-    }
-}
-
-private fun kindIcon(k: EntityKind): ImageVector = when (k) {
-    EntityKind.SCENES, EntityKind.MARKERS -> Icons.Filled.VideoLibrary
-    EntityKind.PERFORMERS -> Icons.Filled.People
-    EntityKind.IMAGES, EntityKind.GALLERIES -> Icons.Filled.Image
-    else -> Icons.Filled.Movie
-}
-
-@Composable
-private fun CollectionRow(c: OfflineCollection, busy: Boolean) {
-    val context = LocalContext.current
-    val saver = context.container.offlineSaver
-    val kind = c.entityKind
-    var confirmRemove by remember { mutableStateOf(false) }
-    if (confirmRemove) {
-        AlertDialog(
-            onDismissRequest = { confirmRemove = false },
-            title = { Text("Remove saved list?") },
-            text = {
-                Text(
-                    "“${c.label}” and the info it saved are removed from this phone. Anything another saved " +
-                        "list or a download still uses is kept." +
-                        if (c.downloadQuality != null) " Downloaded videos stay; delete them in Downloads." else "",
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmRemove = false
-                    saver.forget(c)
-                    context.toast("Removed “${c.label}”")
-                }) { Text("Remove", color = Ink.Red, maxLines = 1) }
-            },
-            dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text("Cancel", maxLines = 1) } },
-            containerColor = Ink.Raised,
-        )
-    }
-    Row(
-        Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconTile(kindIcon(kind), if (c.scopeType == "none") Ink.Amber else Ink.Violet, size = 38)
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(c.label, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                "${c.count} ${kind.label.lowercase()}" +
-                    (if (kind == EntityKind.IMAGES) if (c.fullImages) " · full images" else " · thumbnails only" else "") +
-                    (if (c.downloadQuality != null) " · with videos" else "") +
-                    (if (c.savedAt > 0) " · " + Format.agoMillis(c.savedAt) else ""),
-                style = MaterialTheme.typography.bodySmall, color = Ink.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
-        }
-        IconButton(onClick = { saver.refresh(c) }, enabled = !busy) {
-            Icon(Icons.Filled.Refresh, "Refresh", tint = if (busy) Ink.Line else Ink.Muted)
-        }
-        IconButton(onClick = { confirmRemove = true }) {
-            Icon(Icons.Filled.Delete, "Remove", tint = Ink.Red)
-        }
     }
 }
 

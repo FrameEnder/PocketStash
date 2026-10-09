@@ -55,6 +55,7 @@ import com.frameender.pocketstash.ui.settings.SettingsScreen
 import com.frameender.pocketstash.ui.settings.SettingsSectionScreen
 import com.frameender.pocketstash.ui.settings.UpdatePopup
 import com.frameender.pocketstash.ui.downloads.DownloadsScreen
+import com.frameender.pocketstash.ui.settings.SavedListsScreen
 import androidx.compose.material3.TextButton
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -228,6 +229,7 @@ fun AppNav(configured: Boolean) {
                 composable<ImageViewerRoute> { ImageViewerScreen(it.toRoute<ImageViewerRoute>()) }
                 composable<UpdatesRoute> { UpdatesScreen() }
                 composable<DownloadsRoute> { DownloadsScreen() }
+                composable<SavedListsRoute> { SavedListsScreen() }
                 composable<HomeLayoutRoute> { HomeLayoutScreen() }
                 composable<EditRoute> { entry ->
                     val r = entry.toRoute<EditRoute>()

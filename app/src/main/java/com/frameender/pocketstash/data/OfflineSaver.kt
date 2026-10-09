@@ -441,6 +441,44 @@ class OfflineSaver(
                     storeScoped(k, page.items, s, ::keep)
                 }
             }
+            /**
+             * Every image in a gallery (not just the first page), as it was when the save started:
+             * the list, each image's thumbnail, and the full image too if that was asked for.
+             */
+            /**
+             * An image's thumbnail (and the full image, if asked for) saved as real files: never
+             * evicted like the image cache, and removed with the list.
+             */
+            suspend fun keepPictures(img: JsonObject) {
+                val conn = repo.connection
+                val paths = img["paths"] as? JsonObject
+                fun raw(key: String) = (paths?.get(key) as? JsonPrimitive)?.contentOrNull
+                val isVideo = runCatching { repo.cardFor(EntityKind.IMAGES, img).isVideo }.getOrDefault(false)
+                runCatching { library.saveImage(raw("thumbnail"), conn.http) { conn.media(it) } }
+                if (c.fullImages && !isVideo) runCatching { library.saveImage(raw("image"), conn.http) { conn.media(it) } }
+            }
+
+            suspend fun everyImage(galleryId: String, index: Int, galleries: Int) {
+                val gScope = Scope.Gallery(galleryId)
+                val sort = BrowseSpec.defaultSort(EntityKind.IMAGES, gScope)
+                val perPage = 100
+                var page = 1
+                var count = 0
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val p = runCatching { repo.browseRaw(EntityKind.IMAGES, gScope, sort, page, perPage) }.getOrNull() ?: break
+                    storeScoped(EntityKind.IMAGES, p.items, gScope, ::keep)
+                    for (img in p.items) {
+                        currentCoroutineContext().ensureActive()
+                        count++
+                        progress.value = Progress("${c.label} · gallery ${index + 1} of $galleries", count, p.total)
+                        keepPictures(img)
+                    }
+                    if (p.items.size < perPage || count >= p.total) break
+                    page++
+                }
+            }
+
             // Everything the saved entries link to, so their links still open offline.
             val refs = LinkedHashMap<EntityKind, LinkedHashSet<String>>()
             fun ref(k: EntityKind, id: String?) { if (!id.isNullOrBlank()) refs.getOrPut(k) { LinkedHashSet() }.add(id) }
@@ -468,16 +506,17 @@ class OfflineSaver(
                     EntityKind.STUDIOS -> { detail(kind, id); related(EntityKind.SCENES, Scope.Studio(id)) }
                     EntityKind.TAGS -> { detail(kind, id); related(EntityKind.SCENES, Scope.Tag(id)) }
                     EntityKind.GROUPS -> { detail(kind, id); related(EntityKind.SCENES, Scope.Group(id)) }
-                    EntityKind.GALLERIES -> { detail(kind, id); related(EntityKind.IMAGES, Scope.Gallery(id)) }
-                    EntityKind.IMAGES -> detail(kind, id)
+                    EntityKind.GALLERIES -> { detail(kind, id); everyImage(id, i, todo.size) }
+                    EntityKind.IMAGES -> { detail(kind, id); keepPictures(item) }
                     EntityKind.MARKERS -> (item["scene"] as? JsonObject)?.let { sc ->
                         (sc["id"] as? JsonPrimitive)?.contentOrNull?.let { sid -> detail(EntityKind.SCENES, sid); sceneIds += sid }
                     }
                 }
                 // The pictures the list and detail screens show.
-                val card = runCatching { repo.cardFor(kind, item) }.getOrNull()
-                fetch(card?.image)
-                if (c.fullImages && kind == EntityKind.IMAGES && card?.isVideo == false) fetch(card?.fullImage)
+                if (kind != EntityKind.IMAGES) {
+                    val card = runCatching { repo.cardFor(kind, item) }.getOrNull()
+                    fetch(card?.image)
+                }
             }
             library.markListScenes(sceneIds)
 

@@ -421,7 +421,7 @@ class OfflineLibrary(context: Context, private val scope: CoroutineScope) {
 
     companion object {
         /** JSON fields that hold picture URLs. */
-        val IMAGE_FIELDS = setOf("screenshot", "image_path", "front_image_path", "back_image_path", "cover", "thumbnail")
+        val IMAGE_FIELDS = setOf("screenshot", "image_path", "front_image_path", "back_image_path", "cover", "thumbnail", "image")
     }
 }
 

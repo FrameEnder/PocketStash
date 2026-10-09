@@ -92,7 +92,7 @@ fun SaveOfflineDialog(base: OfflineCollection, total: Int?, onDismiss: () -> Uni
                         }
                     }
                 }
-                if (kind == EntityKind.IMAGES) {
+                if (kind == EntityKind.IMAGES || kind == EntityKind.GALLERIES) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(full, { full = it }, colors = CheckboxDefaults.colors(checkedColor = Ink.Amber))
                         Text("Include full-size images", style = MaterialTheme.typography.bodyMedium)
@@ -103,14 +103,15 @@ fun SaveOfflineDialog(base: OfflineCollection, total: Int?, onDismiss: () -> Uni
                         EntityKind.IMAGES ->
                             if (full) "Uses more space. Video clips keep only their thumbnails."
                             else "Thumbnails only: quick and small."
+                        EntityKind.GALLERIES ->
+                            "Saves each gallery and every image in it, as they are now" +
+                                if (full) ", full size. Uses a lot of space for big galleries." else ", as thumbnails.
                         EntityKind.SCENES ->
                             if (videos) "Saves each scene's page and screenshot, and queues the videos in Downloads " +
                                 "(${if (wifiOnly) "on Wi-Fi" else "on any connection"}). Converted MP4s take longer; Stash makes them as they download."
                             else "Saves the list, each scene's page and its screenshot. Without the videos, scenes show as info only offline."
                         EntityKind.MARKERS ->
                             "Saves the list and each marker's scene page. Markers play offline when their scene is downloaded."
-                        EntityKind.GALLERIES ->
-                            "Saves the list, each gallery's page, and the first page of its images."
                         else -> "Saves the list, each page, and the first page of its scenes."
                     },
                     style = MaterialTheme.typography.bodySmall, color = Ink.Muted, modifier = Modifier.padding(top = 6.dp),
@@ -122,7 +123,7 @@ fun SaveOfflineDialog(base: OfflineCollection, total: Int?, onDismiss: () -> Uni
                 saver.save(
                     base.copy(
                         max = max,
-                        fullImages = full && kind == EntityKind.IMAGES,
+                        fullImages = full && (kind == EntityKind.IMAGES || kind == EntityKind.GALLERIES),
                         downloadQuality = if (kind == EntityKind.SCENES && videos) quality else null,
                     ),
                 )
