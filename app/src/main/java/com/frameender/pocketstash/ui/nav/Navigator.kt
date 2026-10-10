@@ -75,6 +75,11 @@ class Navigator(private val nav: NavController, private val context: Context) {
         context.startActivity(PlayerActivity.sceneIntent(context, sceneId, startSeconds))
     }
 
+    /** Plays the scenes lined up in PlayQueue. */
+    fun playQueue() {
+        context.startActivity(PlayerActivity.queueIntent(context))
+    }
+
     fun playUrl(url: String, title: String) {
         context.startActivity(PlayerActivity.urlIntent(context, url, title))
     }

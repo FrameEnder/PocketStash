@@ -268,9 +268,16 @@ class SceneDownloads(
         library.releaseDownload(sceneId)
     }
 
+    /** Where a downloaded scene's subtitles for [lang] / [type] are kept (WebVTT, as Stash serves them). */
+    fun captionFile(sceneId: String, lang: String, type: String): File =
+        File(dir, "scene-$sceneId-cap-${safe(lang)}-${safe(type)}.vtt")
+
+    private fun safe(s: String) = s.replace(Regex("[^A-Za-z0-9_.-]"), "_")
+
     private fun deleteFiles(d: SceneDownload) {
         File(dir, d.fileName).delete()
         File(dir, d.fileName + ".part").delete()
+        dir.listFiles()?.filter { it.name.startsWith("scene-${d.sceneId}-cap-") }?.forEach { it.delete() }
     }
 
     fun deleteAll() {
@@ -320,6 +327,24 @@ class SceneDownloads(
         with(OfflineQuery) {
             library.saveImage(scene.o("paths")?.s("screenshot"), http, resolve)
             scene.a("scene_markers").forEach { library.saveImage(it.s("screenshot"), http, resolve) }
+            // Seek-bar previews (sprite sheet + its index) so scrubbing shows frames offline too.
+            library.saveImage(scene.o("paths")?.s("sprite"), http, resolve)
+            library.saveImage(scene.o("paths")?.s("vtt"), http, resolve)
+            // Subtitles, one file per language/format.
+            val captionUrl = scene.o("paths")?.s("caption")?.let { resolve(it) ?: it }
+            if (captionUrl != null) {
+                for (cap in scene.a("captions")) {
+                    val lang = cap.s("language_code") ?: continue
+                    val type = cap.s("caption_type") ?: continue
+                    val url = captionUrl.toHttpUrlOrNull()?.newBuilder()
+                        ?.setQueryParameter("lang", lang)?.setQueryParameter("type", type)?.build() ?: continue
+                    runCatching {
+                        http.newCall(Request.Builder().url(url).build()).execute().use { r ->
+                            if (r.isSuccessful) r.body?.string()?.let { captionFile(sceneId, lang, type).writeText(it) }
+                        }
+                    }
+                }
+            }
             suspend fun related(kind: EntityKind, id: String?, imageField: String) {
                 if (id == null) return
                 runCatching {

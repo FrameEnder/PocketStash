@@ -30,6 +30,11 @@ import android.widget.Toast
 import com.frameender.pocketstash.data.OfflineCollection
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.runtime.rememberCoroutineScope
+import com.frameender.pocketstash.player.PlayQueue
+import com.frameender.pocketstash.player.QueueEntry
+import kotlinx.coroutines.launch
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -64,6 +69,9 @@ import com.frameender.pocketstash.ui.components.LoadingBox
 import com.frameender.pocketstash.ui.nav.LocalNavigator
 import com.frameender.pocketstash.ui.theme.Ink
 import kotlinx.coroutines.flow.distinctUntilChanged
+
+/** "Play all" lines up at most this many scenes. */
+private const val MAX_QUEUE = 500
 
 /** Card width multiplier relative to the user's base grid width. */
 fun widthFactor(kind: EntityKind): Float = when (kind) {
@@ -139,6 +147,40 @@ fun BrowseGrid(
 private fun BrowseControls(vm: BrowseViewModel, state: BrowseState, showSearch: Boolean, offlineLabel: String) {
     val offlineNow by LocalContext.current.container.connection.offline.collectAsState()
     val context = LocalContext.current
+    val nav = LocalNavigator.current
+    val scope = rememberCoroutineScope()
+    var queueing by remember { mutableStateOf(false) }
+
+    /** "Play all" / "Shuffle": line up every scene in this list (as filtered) and start playing. */
+    fun playAll(shuffle: Boolean) {
+        if (queueing) return
+        queueing = true
+        scope.launch {
+            try {
+                val repo = context.container.repository
+                val offline = repo.isOffline
+                val entries = ArrayList<QueueEntry>()
+                var page = 1
+                while (entries.size < MAX_QUEUE) {
+                    val p = repo.browse(EntityKind.SCENES, vm.scope, state.query, page, 100)
+                    // Offline, only downloaded scenes can play.
+                    p.items.filter { !offline || !it.infoOnly }.forEach { entries += QueueEntry(it.id, it.title, it.image) }
+                    if (p.items.size < 100 || page * 100 >= p.total) break
+                    page++
+                }
+                if (entries.isEmpty()) {
+                    Toast.makeText(context, if (offline) "Nothing downloaded to play here" else "Nothing to play", Toast.LENGTH_SHORT).show()
+                } else {
+                    PlayQueue.start(entries.take(MAX_QUEUE), shuffle = shuffle, from = offlineLabel)
+                    nav.playQueue()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, e.message ?: "Couldn't load the list", Toast.LENGTH_SHORT).show()
+            } finally {
+                queueing = false
+            }
+        }
+    }
     var saving by remember { mutableStateOf(false) }
     val sorts = remember(vm.kind) { BrowseSpec.sorts(vm.kind) }
     val quick = remember(vm.kind) { BrowseSpec.quickFilters(vm.kind) }
@@ -212,6 +254,14 @@ private fun BrowseControls(vm: BrowseViewModel, state: BrowseState, showSearch: 
                 )
             }
             Spacer(Modifier.width(4.dp))
+            if (vm.kind == EntityKind.SCENES && state.total > 0) {
+                IconButton(onClick = { playAll(false) }, enabled = !queueing) {
+                    Icon(Icons.Filled.PlayArrow, "Play all", tint = Ink.Amber)
+                }
+                IconButton(onClick = { playAll(true) }, enabled = !queueing) {
+                    Icon(Icons.Filled.Shuffle, "Shuffle all", tint = Ink.Amber)
+                }
+            }
             Text(
                 if (state.total > 0) "${state.total}" else "",
                 style = MaterialTheme.typography.labelMedium,

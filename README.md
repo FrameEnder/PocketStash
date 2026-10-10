@@ -38,7 +38,7 @@ markers, in one app made for a phone. It works over plain HTTP, so a Tailscale a
 | 📚 **Browse** | Scenes, performers, studios, tags, groups, galleries, images, and markers. Infinite scroll, search, every useful sort, ascending or descending, a stable random sort with reshuffle, quick filters (unwatched, in progress, rated, organized, favorites), and pull to refresh. |
 | 🔍 **Search** | One box that searches all eight types at once, with "See all" for each. |
 | 🎞️ **Scene page** | Play or resume, play from the start, star rating, O counter, organized toggle, play count and watch time, performers, tags, markers (tap to jump), linked galleries and groups, details, URLs, and full file info. |
-| 🎬 **Player** | Double-tap left to skip back 5s or right to skip ahead 15s, and keep tapping to keep skipping. Swipe up or down on the left for brightness, on the right for volume, with a slider on that side. Mute, play/pause, skip, speed, rotate, and picture-in-picture. The seek bar shows your markers and the name of the one you're in. |
+| 🎬 **Player** | Double-tap to skip (5s back / 15s ahead, keep tapping to keep going), swipe for brightness and volume, **hold for 2×**. **Scrub previews** from Stash's sprite sheets, **marker chapters** on the seek bar with previous/next, **A–B loop**, and **frame-by-frame** stepping while paused. Controls hide when paused too, so you can look at the frame. **Subtitles** and **audio tracks**, speed (0.5×–2×), all **remembered per scene**, plus a **sleep timer**. **Play all / Shuffle** any scene list into a queue with auto-next and an Up next sheet (offline too). Picture-in-picture with back, play/pause and forward buttons. |
 | 📡 **Streams** | Tries the direct file first and falls back through Stash's transcodes (HLS, DASH, MP4, WebM) when the phone can't decode it. You can also pick a stream yourself. |
 | ⏱️ **Play tracking** | Resume points, play counts, and watch time are sent back to Stash, so the web UI and the app stay in step. |
 | 🔖 **Markers** | Add a marker at the current spot without leaving the player, or from the scene page. Edit or delete any marker. |
@@ -94,6 +94,18 @@ Stash up to date.
 
 | Gesture | Does |
 |---|---|
+| Tap | Show or hide the controls (playing or paused) |
+| Double-tap left / right | Skip back 5s / ahead 15s. Each extra tap within a moment skips again. |
+| Hold a finger on the video | Play at 2× until you let go |
+| Swipe up or down on the left | Brightness (only inside the player) |
+| Swipe up or down on the right | Volume. Turning it up while muted unmutes. |
+| Drag the seek bar | Scrub with a preview frame; gold ticks are markers, teal is the A–B loop |
+| ‹M / M› | Previous / next marker |
+| A–B | First tap sets A, second sets B and loops, third clears |
+| ‹F / F› (paused) | Step one frame back / forward |
+| ⋮ | Speed, subtitles, audio, quality, sleep timer, rotate, picture-in-picture |
+
+---|---|
 | Tap | Show or hide the controls |
 | Double-tap left / right | Skip back 5s / ahead 15s. Each extra tap within a moment skips again. |
 | Swipe up or down on the left | Brightness (only inside the player) |
