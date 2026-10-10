@@ -474,7 +474,7 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
-    private fun setSpeed(s: Float) {
+    private fun changeSpeed(s: Float) {
         speed = s
         player.setPlaybackSpeed(s)
         sceneId?.let { id -> memory.update(id) { it.copy(speed = s) } }
@@ -759,7 +759,7 @@ class PlayerActivity : ComponentActivity() {
             val audio = groups(C.TRACK_TYPE_AUDIO)
             PlaybackSheet(
                 speed = speed,
-                onSpeed = { setSpeed(it) },
+                onSpeed = { changeSpeed(it) },
                 subtitles = text.mapIndexed { i, g -> PickOption(describe(g, i, C.TRACK_TYPE_TEXT), selected = g.isSelected) },
                 onSubtitle = { selectText(it) },
                 audio = audio.mapIndexed { i, g -> PickOption(describe(g, i, C.TRACK_TYPE_AUDIO), selected = g.isSelected) },
